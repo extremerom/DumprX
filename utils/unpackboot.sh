@@ -312,10 +312,41 @@ if lzop -t ../ramdisk.packed 2>/dev/null; then
     lzop -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
     unpack_complete
 fi
-if lz4 -d ../ramdisk.packed 2>/dev/null | cpio -i -d -m --no-absolute-filenames 2>/dev/null; then
+if lz4 -t ../ramdisk.packed 2>/dev/null; then
     psuccess "ramdisk is lz4 format."
     format=lz4
-else
-    perr "ramdisk is unknown format, can't unpack ramdisk"
+    lz4 -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
+    unpack_complete
 fi
+# Try zstd compression (common in newer Android versions)
+if command -v zstd >/dev/null 2>&1; then
+    if zstd -t ../ramdisk.packed 2>/dev/null; then
+        psuccess "ramdisk is zstd format."
+        format=zstd
+        zstd -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
+        unpack_complete
+    fi
+fi
+# Try bzip2 compression
+if bzip2 -t ../ramdisk.packed 2>/dev/null; then
+    psuccess "ramdisk is bzip2 format."
+    format=bzip2
+    bzip2 -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
+    unpack_complete
+fi
+# Try as raw cpio (uncompressed)
+if cpio -i -d -m --no-absolute-filenames < ../ramdisk.packed 2>/dev/null; then
+    psuccess "ramdisk is uncompressed cpio format."
+    format=cpio
+    unpack_complete
+fi
+# If ramdisk.packed is empty or very small, it might be intentionally empty
+if [ ! -s ../ramdisk.packed ] || [ $(stat -c%s ../ramdisk.packed) -lt 100 ]; then
+    psuccess "ramdisk is empty (vendor_boot or init_boot may not have ramdisk)."
+    format=empty
+    unpack_complete
+fi
+# Unknown format - keep the packed file for manual inspection
+perr "ramdisk is unknown format, can't unpack ramdisk"
+cp ../ramdisk.packed ../ramdisk.unknown 2>/dev/null
 unpack_complete
