@@ -380,6 +380,301 @@ function superimage_extract() {
 	log_success "Super image extraction completed"
 }
 
+# ============================================================================
+# IMAGE EXTRACTION FUNCTIONS
+# ============================================================================
+
+# Detect filesystem type of an image
+function detect_filesystem() {
+	local img_file="$1"
+	local fs_type=""
+	
+	# Check for sparse image first
+	if file "${img_file}" | grep -q "Android sparse image"; then
+		echo "sparse"
+		return 0
+	fi
+	
+	# Try to detect filesystem using file command
+	local file_output
+	file_output=$(file "${img_file}")
+	
+	if echo "${file_output}" | grep -qi "ext[2-4]"; then
+		echo "ext4"
+	elif echo "${file_output}" | grep -qi "erofs"; then
+		echo "erofs"
+	elif echo "${file_output}" | grep -qi "f2fs"; then
+		echo "f2fs"
+	elif echo "${file_output}" | grep -qi "squashfs"; then
+		echo "squashfs"
+	else
+		# Try fsck.erofs to detect EROFS
+		if "${FSCK_EROFS}" --help >/dev/null 2>&1; then
+			if "${FSCK_EROFS}" "${img_file}" >/dev/null 2>&1; then
+				echo "erofs"
+				return 0
+			fi
+		fi
+		echo "unknown"
+	fi
+}
+
+# Extract partition using 7z
+function extract_with_7z() {
+	local partition="$1"
+	local img_file="$2"
+	local output_dir="$3"
+	
+	log_debug "Attempting extraction with 7z..."
+	${BIN_7ZZ} x -snld "${img_file}" -y -o"${output_dir}/" >/dev/null 2>&1
+	return $?
+}
+
+# Extract partition using fsck.erofs
+function extract_with_erofs() {
+	local partition="$1"
+	local img_file="$2"
+	local output_dir="$3"
+	
+	log_debug "Attempting extraction with fsck.erofs..."
+	"${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1 | grep -v "^$"
+	return $?
+}
+
+# Extract partition using mount loop
+function extract_with_mount() {
+	local partition="$1"
+	local img_file="$2"
+	local output_dir="$3"
+	local temp_mount="${output_dir}_mount_tmp"
+	
+	log_debug "Attempting extraction with mount loop..."
+	
+	# Create temporary mount point
+	mkdir -p "${temp_mount}" 2>/dev/null
+	
+	# Try to mount
+	if sudo mount -o loop,ro -t auto "${img_file}" "${temp_mount}" 2>/dev/null; then
+		log_debug "Successfully mounted ${partition}"
+		
+		# Copy contents
+		if sudo cp -rf "${temp_mount}/"* "${output_dir}/" 2>/dev/null; then
+			log_debug "Successfully copied files from mount"
+			
+			# Unmount
+			sudo umount "${temp_mount}" 2>/dev/null
+			rm -rf "${temp_mount}"
+			
+			# Fix permissions
+			sudo chown -R "$(whoami)" "${output_dir}/"* 2>/dev/null
+			chmod -R u+rwX "${output_dir}/"* 2>/dev/null
+			
+			return 0
+		else
+			log_warn "Failed to copy files from mount"
+			sudo umount "${temp_mount}" 2>/dev/null
+			rm -rf "${temp_mount}"
+			return 1
+		fi
+	else
+		log_warn "Failed to mount ${partition}"
+		rm -rf "${temp_mount}"
+		return 1
+	fi
+}
+
+# Extract a single partition image with automatic method detection
+function extract_partition_image() {
+	local partition="$1"
+	local img_file="${partition}.img"
+	local output_dir="${partition}"
+	
+	# Skip if image doesn't exist
+	if [[ ! -f "${img_file}" ]]; then
+		return 0
+	fi
+	
+	# Skip special partitions
+	if echo "${partition}" | grep -q "boot\|recovery\|dtbo\|vendor_boot\|tz\|modem"; then
+		log_debug "Skipping special partition: ${partition}"
+		return 0
+	fi
+	
+	log_step "Extracting ${partition} partition"
+	
+	# Create output directory
+	mkdir -p "${output_dir}" 2>/dev/null || rm -rf "${output_dir:?}"/*
+	
+	# Detect filesystem
+	local fs_type
+	fs_type=$(detect_filesystem "${img_file}")
+	log_info "Detected filesystem: ${fs_type}"
+	
+	# Handle sparse images first
+	if [[ "${fs_type}" == "sparse" ]]; then
+		log_info "Converting sparse image to raw..."
+		if "${SIMG2IMG}" "${img_file}" "${img_file}.raw" 2>/dev/null; then
+			mv "${img_file}.raw" "${img_file}"
+			fs_type=$(detect_filesystem "${img_file}")
+			log_success "Sparse image converted, new filesystem: ${fs_type}"
+		else
+			log_warn "Failed to convert sparse image"
+		fi
+	fi
+	
+	# Try extraction methods in order
+	local extraction_success=false
+	
+	# Method 1: Try 7z first (works for ext4, some others)
+	if [[ "${fs_type}" == "ext4" ]] || [[ "${fs_type}" == "unknown" ]]; then
+		if extract_with_7z "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with 7z"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "7z extraction failed for ${partition}"
+		fi
+	fi
+	
+	# Method 2: Try fsck.erofs for EROFS images
+	if [[ "${fs_type}" == "erofs" ]]; then
+		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with fsck.erofs"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "fsck.erofs extraction failed for ${partition}"
+		fi
+	fi
+	
+	# Method 3: Try mount loop as last resort
+	if ! ${extraction_success}; then
+		log_info "Trying mount loop extraction..."
+		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with mount loop"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "Mount loop extraction failed for ${partition}"
+		fi
+	fi
+	
+	# If all methods failed
+	if ! ${extraction_success}; then
+		log_error "Failed to extract ${partition} partition"
+		log_error "Filesystem: ${fs_type}"
+		log_error "Methods tried: 7z, fsck.erofs, mount loop"
+		
+		# Provide helpful error messages based on filesystem
+		case "${fs_type}" in
+			"erofs")
+				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
+				;;
+			"f2fs")
+				log_error "F2FS requires Linux kernel 5.15+ for proper support"
+				;;
+			"unknown")
+				log_error "Unknown filesystem - image may be encrypted or corrupted"
+				;;
+		esac
+		
+		# Keep the image file for manual inspection
+		log_info "Image file preserved for manual inspection: ${img_file}"
+		return 1
+	fi
+	
+	return 0
+}
+
+# Extract boot image components
+function extract_boot_image() {
+	local boot_type="$1"  # "boot", "vendor_boot", "recovery", "init_boot"
+	local boot_img="${boot_type}.img"
+	
+	if [[ ! -f "${boot_img}" ]]; then
+		return 0
+	fi
+	
+	log_step "Extracting ${boot_type} image"
+	
+	# Create directories
+	mkdir -p "${boot_type}" "${boot_type}img" "${boot_type}dts" "${boot_type}RE" 2>/dev/null
+	
+	# Extract DTB
+	log_debug "Extracting device tree blobs..."
+	if uvx -q extract-dtb "${boot_img}" -o "${boot_type}img" >/dev/null 2>&1; then
+		# Convert DTB to DTS
+		find "${boot_type}img" -name '*.dtb' -type f 2>/dev/null | while read -r dtb_file; do
+			local dtb_name
+			dtb_name=$(basename "${dtb_file}")
+			local dts_name="${dtb_name/.dtb/.dts}"
+			"${DTC}" -q -s -f -I dtb -O dts -o "${boot_type}dts/${dts_name}" "${dtb_file}" 2>/dev/null
+		done
+		log_debug "Device tree blobs extracted and converted"
+	fi
+	
+	# Unpack boot image
+	log_debug "Unpacking boot image structure..."
+	if bash "${UNPACKBOOT}" "${boot_img}" "${boot_type}" 2>/dev/null; then
+		log_debug "Boot image unpacked successfully"
+	fi
+	
+	# Extract kernel config if present
+	if [[ "${boot_type}" == "boot" ]] || [[ "${boot_type}" == "vendor_boot" ]]; then
+		log_debug "Extracting kernel configuration..."
+		bash "${EXTRACT_IKCONFIG}" "${boot_img}" > "${boot_type}RE/ikconfig" 2>/dev/null
+		[[ ! -s "${boot_type}RE/ikconfig" ]] && rm -f "${boot_type}RE/ikconfig" 2>/dev/null
+		
+		# Extract kallsyms
+		log_debug "Extracting kernel symbols..."
+		if [[ -f "${boot_type}/kernel" ]]; then
+			python3 "${KALLSYMS_FINDER}" "${boot_type}/kernel" > "${boot_type}RE/kernel_kallsyms.txt" 2>/dev/null
+		else
+			python3 "${KALLSYMS_FINDER}" "${boot_img}" > "${boot_type}RE/${boot_type}_kallsyms.txt" 2>/dev/null
+		fi
+		
+		# Extract vmlinux
+		log_debug "Extracting vmlinux ELF..."
+		python3 "${VMLINUX2ELF}" "${boot_img}" "${boot_type}RE/${boot_type}.elf" 2>/dev/null
+		
+		# Extract DTB from unpacked boot
+		if [[ -f "${boot_type}/dtb.img" ]]; then
+			mkdir -p "dtbimg" 2>/dev/null
+			uvx -q extract-dtb "${boot_type}/dtb.img" -o "dtbimg" >/dev/null 2>&1
+		fi
+	fi
+	
+	log_success "${boot_type^} image extracted successfully"
+}
+
+# Extract DTBO image
+function extract_dtbo_image() {
+	if [[ ! -f "dtbo.img" ]]; then
+		return 0
+	fi
+	
+	log_step "Extracting DTBO image"
+	
+	mkdir -p "dtbo" "dtbodts" 2>/dev/null
+	
+	# Extract DTB overlays
+	if uvx -q extract-dtb "dtbo.img" -o "dtbo" >/dev/null 2>&1; then
+		# Convert DTB to DTS
+		find "dtbo" -name '*.dtb' -type f 2>/dev/null | while read -r dtb_file; do
+			local dtb_name
+			dtb_name=$(basename "${dtb_file}")
+			local dts_name="${dtb_name/.dtb/.dts}"
+			"${DTC}" -q -s -f -I dtb -O dts -o "dtbodts/${dts_name}" "${dtb_file}" 2>/dev/null
+		done
+		log_success "DTBO extracted successfully"
+	else
+		log_warn "Failed to extract DTBO"
+	fi
+}
+
 log_header "Firmware Extraction Process"
 log_info "Output directory: ${OUTDIR}"
 cd "${TMPDIR}/" || exit
@@ -951,110 +1246,45 @@ done
 cd "${OUTDIR}"/ || exit
 rm -rf "${TMPDIR:?}"/*
 
-# Extract boot.img
-if [[ -f "${OUTDIR}"/boot.img ]]; then
-	# Extract dts
-	mkdir -p "${OUTDIR}"/bootimg "${OUTDIR}"/bootdts 2>/dev/null
-	uvx -q extract-dtb "${OUTDIR}"/boot.img -o "${OUTDIR}"/bootimg >/dev/null
-	find "${OUTDIR}"/bootimg -name '*.dtb' -type f | gawk -F'/' '{print $NF}' | while read -r i; do "${DTC}" -q -s -f -I dtb -O dts -o bootdts/"${i/\.dtb/.dts}" bootimg/"${i}"; done 2>/dev/null
-	bash "${UNPACKBOOT}" "${OUTDIR}"/boot.img "${OUTDIR}"/boot 2>/dev/null
-	printf "Boot extracted\n"
-	# extract-ikconfig
-	mkdir -p "${OUTDIR}"/bootRE
-	bash "${EXTRACT_IKCONFIG}" "${OUTDIR}"/boot.img > "${OUTDIR}"/bootRE/ikconfig 2> /dev/null
-	[[ ! -s "${OUTDIR}"/bootRE/ikconfig ]] && rm -f "${OUTDIR}"/bootRE/ikconfig 2>/dev/null
-	# vmlinux-to-elf
-	if [[ ! -f "${OUTDIR}"/vendor_boot.img ]]; then
-		python3 "${KALLSYMS_FINDER}" "${OUTDIR}"/boot.img > "${OUTDIR}"/bootRE/boot_kallsyms.txt >/dev/null 2>&1
-		printf "boot_kallsyms.txt generated\n"
-	else
-		python3 "${KALLSYMS_FINDER}" "${OUTDIR}"/boot/kernel > "${OUTDIR}"/bootRE/kernel_kallsyms.txt >/dev/null 2>&1
-		printf "kernel_kallsyms.txt generated\n"
-	fi
-	python3 "${VMLINUX2ELF}" "${OUTDIR}"/boot.img "${OUTDIR}"/bootRE/boot.elf >/dev/null 2>&1
-	printf "boot.elf generated\n"
-	[[ -f "${OUTDIR}"/boot/dtb.img ]] && {
-		mkdir -p "${OUTDIR}"/dtbimg 2>/dev/null
-		uvx -q extract-dtb "${OUTDIR}"/boot/dtb.img -o "${OUTDIR}"/dtbimg >/dev/null
-	}
-fi
+# ============================================================================
+# PARTITION EXTRACTION PHASE
+# ============================================================================
 
-# Extract vendor_boot.img
-if [[ -f "${OUTDIR}"/vendor_boot.img ]]; then
-	# Extract dts
-	mkdir -p "${OUTDIR}"/vendor_bootimg "${OUTDIR}"/vendor_bootdts 2>/dev/null
-	uvx -q extract-dtb "${OUTDIR}"/vendor_boot.img -o "${OUTDIR}"/vendor_bootimg >/dev/null
-	find "${OUTDIR}"/vendor_bootimg -name '*.dtb' -type f | gawk -F'/' '{print $NF}' | while read -r i; do "${DTC}" -q -s -f -I dtb -O dts -o vendor_bootdts/"${i/\.dtb/.dts}" vendor_bootimg/"${i}"; done 2>/dev/null
-	bash "${UNPACKBOOT}" "${OUTDIR}"/vendor_boot.img "${OUTDIR}"/vendor_boot 2>/dev/null
-	printf "Vendor Boot extracted\n"
-	# extract-ikconfig
-	mkdir -p "${OUTDIR}"/vendor_bootRE
-	# vmlinux-to-elf
-	python3 "${VMLINUX2ELF}" "${OUTDIR}"/vendor_boot.img "${OUTDIR}"/vendor_bootRE/vendor_boot.elf >/dev/null 2>&1
-	printf "vendor_boot.elf generated\n"
-	[[ -f "${OUTDIR}"/vendor_boot/dtb.img ]] && {
-		mkdir -p "${OUTDIR}"/vendor_dtbimg 2>/dev/null
-		uvx -q extract-dtb "${OUTDIR}"/vendor_boot/dtb.img -o "${OUTDIR}"/vendor_dtbimg >/dev/null
-	}
-fi
+log_header "Partition Extraction Phase"
 
-# Extract recovery.img
-if [[ -f "${OUTDIR}"/recovery.img ]]; then
-	bash "${UNPACKBOOT}" "${OUTDIR}"/recovery.img "${OUTDIR}"/recovery 2>/dev/null
-	printf "Recovery extracted\n"
-fi
+# Extract boot images using new modular functions
+extract_boot_image "boot"
+extract_boot_image "vendor_boot"
+extract_boot_image "recovery"
+extract_boot_image "init_boot"
+extract_boot_image "vendor_kernel_boot"
 
-# Extract dtbo
-if [[ -f "${OUTDIR}"/dtbo.img ]]; then
-	mkdir -p "${OUTDIR}"/dtbo "${OUTDIR}"/dtbodts 2>/dev/null
-	uvx -q extract-dtb "${OUTDIR}"/dtbo.img -o "${OUTDIR}"/dtbo >/dev/null
-	find "${OUTDIR}"/dtbo -name '*.dtb' -type f | gawk -F'/' '{print $NF}' | while read -r i; do "${DTC}" -q -s -f -I dtb -O dts -o dtbodts/"${i/\.dtb/.dts}" dtbo/"${i}"; done 2>/dev/null
-	printf "dtbo extracted\n"
-fi
+# Extract DTBO
+extract_dtbo_image
 
-# Extract Partitions
+# Extract all regular partitions with improved logic
+log_step "Extracting regular partitions"
+partitions_extracted=0
+partitions_failed=0
+
 for p in $PARTITIONS; do
-	if ! echo "${p}" | grep -q "boot\|recovery\|dtbo\|vendor_boot\|tz"; then
-		if [[ -e "$p.img" ]]; then
-			mkdir "$p" 2> /dev/null || rm -rf "${p:?}"/*
-			echo "Extracting $p partition..."
-			${BIN_7ZZ} x -snld "$p".img -y -o"$p"/ > /dev/null 2>&1
-			if [ $? -eq 0 ]; then
-				rm "$p".img > /dev/null 2>&1
-			else
-				# Handling EROFS Images, which can't be handled by 7z.
-				echo "Extraction Failed my 7z"
-				if [ -f $p.img ] && [ $p != "modem" ]; then
-					echo "Couldn't extract $p partition by 7z. Using fsck.erofs."
-					rm -rf "${p}"/*
-					"${FSCK_EROFS}" --extract="$p" "$p".img
-					if [ $? -eq 0 ]; then
-						rm -fv "$p".img > /dev/null 2>&1
-					else
-						echo "Couldn't extract $p partition by fsck.erofs. Using mount loop"
-						sudo mount -o loop -t auto "$p".img "$p"
-						mkdir "${p}_"
-						sudo cp -rf "${p}/"* "${p}_"
-						sudo umount "${p}"
-						sudo cp -rf "${p}_/"* "${p}"
-						sudo rm -rf "${p}_"
-						sudo chown -R "$(whoami)" "${p}"/*
-						chmod -R u+rwX "${p}"/*
-						if [ $? -eq 0 ]; then
-							rm -fv "$p".img > /dev/null 2>&1
-						else
-							echo "Couldn't extract $p partition. It might use an unsupported filesystem."
-							echo "For EROFS: make sure you're using Linux 5.4+ kernel."
-							echo "For F2FS: make sure you're using Linux 5.15+ kernel."
-						fi
-					fi
-				fi
-			fi
-		fi
+	if extract_partition_image "${p}"; then
+		((partitions_extracted++))
+	else
+		((partitions_failed++))
 	fi
 done
 
+if [[ ${partitions_extracted} -gt 0 ]]; then
+	log_success "Successfully extracted ${partitions_extracted} partition(s)"
+fi
+
+if [[ ${partitions_failed} -gt 0 ]]; then
+	log_warn "${partitions_failed} partition(s) failed to extract"
+fi
+
 # Remove Unnecessary Image Leftover From OUTDIR
+log_debug "Cleaning up unnecessary image files..."
 for q in *.img; do
 	if ! echo "${q}" | grep -q "boot\|recovery\|dtbo\|tz\|optics\|omr\|prism\|persist"; then
 		rm -f "${q}" 2>/dev/null
@@ -1062,15 +1292,17 @@ for q in *.img; do
 done
 
 # Oppo/Realme Devices Have Some Images In A Euclid Folder In Their Vendor and/or System, Extract Those For Props
+log_debug "Checking for Euclid images..."
 for dir in "vendor/euclid" "system/system/euclid"; do
 	if [[ -d "${dir}" ]]; then
-		pushd "${dir}" || exit 1
+		pushd "${dir}" >/dev/null || continue
 		for f in *.img; do
 			[[ -f "${f}" ]] || continue
-			${BIN_7ZZ} x "${f}" -o"${f/.img/}"
+			log_debug "Extracting Euclid image: ${f}"
+			${BIN_7ZZ} x "${f}" -o"${f/.img/}" >/dev/null 2>&1
 			rm -f "${f}"
 		done
-		popd || exit 1
+		popd >/dev/null || exit 1
 	fi
 done
 
