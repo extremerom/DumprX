@@ -572,7 +572,7 @@ function extract_with_mount() {
 	
 	# Method 3: Chunked copy using find and cpio (memory efficient)
 	log_debug "Trying find+cpio method..."
-	if (cd "${temp_mount}" && sudo find . -print0 2>/dev/null | sudo cpio -pd0m "${output_dir}" 2>/dev/null); then
+	if (cd "${temp_mount}" && sudo find . -print0 2>/dev/null | sudo cpio --pass-through --make-directories --null --preserve-modification-time "${output_dir}" 2>/dev/null); then
 		log_debug "Successfully copied files using find+cpio"
 		sudo umount "${temp_mount}" 2>/dev/null
 		rm -rf "${temp_mount}"

@@ -74,10 +74,19 @@ function download_direct() {
 			log_debug "Download attempt ${attempt}/${max_attempts}"
 			
 			local last_progress=""
-			local download_result=0
+			local temp_output="/tmp/aria2c_output_$$.log"
 			
-			# Run aria2c and parse output in real-time
-			"${download_cmd}" "${download_args[@]}" 2>&1 | while IFS= read -r line; do
+			# Run aria2c and capture output to file, process in real-time
+			"${download_cmd}" "${download_args[@]}" > "${temp_output}" 2>&1 &
+			local aria_pid=$!
+			
+			# Process output in real-time
+			tail -f "${temp_output}" 2>/dev/null | while IFS= read -r line; do
+				# Check if aria2c process is still running
+				if ! kill -0 ${aria_pid} 2>/dev/null; then
+					break
+				fi
+				
 				# Filter out aria2c summary lines that start with [#
 				if [[ "${line}" =~ ^\[#[0-9a-f]+ ]]; then
 					# Extract key information from progress line
@@ -133,12 +142,22 @@ function download_direct() {
 						printf "\n%s\n" "${line}"
 					fi
 				fi
-			done
+			done &
+			local tail_pid=$!
 			
-			download_result=${PIPESTATUS[0]}
+			# Wait for aria2c to complete
+			wait ${aria_pid}
+			local download_result=$?
+			
+			# Stop the tail process
+			kill ${tail_pid} 2>/dev/null
+			wait ${tail_pid} 2>/dev/null
 			
 			# Clear the progress line
 			printf "\r%*s\r" 100 ""
+			
+			# Clean up temp file
+			rm -f "${temp_output}"
 			
 			if [[ ${download_result} -eq 0 ]]; then
 				download_success=true
