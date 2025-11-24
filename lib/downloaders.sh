@@ -75,7 +75,12 @@ function download_direct() {
 			log_debug "Download attempt ${attempt}/${max_attempts}"
 			
 			local last_progress=""
-			local temp_output="/tmp/aria2c_output_$$.log"
+			# Create secure temporary file
+			local temp_output
+			temp_output=$(mktemp) || {
+				log_error "Failed to create temporary file"
+				return 1
+			}
 			
 			# Run aria2c and capture output to file
 			"${download_cmd}" "${download_args[@]}" > "${temp_output}" 2>&1 &
@@ -144,16 +149,16 @@ function download_direct() {
 			local tail_pid=$!
 			
 			# Wait for aria2c to complete
-			wait ${aria_pid}
+			wait "${aria_pid}"
 			local download_result=$?
 			
 			# Give tail a moment to finish processing remaining output
 			sleep 0.5
 			
 			# Stop the tail process gracefully
-			if kill -0 ${tail_pid} 2>/dev/null; then
-				kill -TERM ${tail_pid} 2>/dev/null
-				wait ${tail_pid} 2>/dev/null
+			if kill -0 "${tail_pid}" 2>/dev/null; then
+				kill -TERM "${tail_pid}" 2>/dev/null
+				wait "${tail_pid}" 2>/dev/null
 			fi
 			
 			# Clear the progress line using defined width
