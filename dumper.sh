@@ -1409,7 +1409,13 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	printf "\nFinal Repository Should Look Like...\n" && ls -lAog
 	printf "\n\nStarting Git Init...\n"
 	git init		# Insure Your Github Authorization Before Running This Script
+	# Configure git for better handling of large repositories and network issues
 	git config --global http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	git config --global http.lowSpeedLimit 0			# Disable low speed limit
+	git config --global http.lowSpeedTime 999999		# Increase timeout
+	git config --global pack.windowMemory 256m			# Reduce memory usage during pack
+	git config --global pack.packSizeLimit 256m		# Limit pack file size
+	git config --global core.compression 0				# Disable compression for speed
 	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
@@ -1477,7 +1483,13 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	printf "\n\nStarting Git Init...\n"
 
 	git init		# Insure Your GitLab Authorization Before Running This Script
+	# Configure git for better handling of large repositories and network issues
 	git config --global http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	git config --global http.lowSpeedLimit 0			# Disable low speed limit
+	git config --global http.lowSpeedTime 999999		# Increase timeout
+	git config --global pack.windowMemory 256m			# Reduce memory usage during pack
+	git config --global pack.packSizeLimit 256m		# Limit pack file size
+	git config --global core.compression 0				# Disable compression for speed
 	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
