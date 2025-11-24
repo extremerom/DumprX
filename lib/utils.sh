@@ -308,7 +308,7 @@ function util_cleanup_temp() {
 # Trap cleanup on exit
 function util_trap_cleanup() {
 	local cleanup_func="$1"
-	trap ''"${cleanup_func}"'' EXIT INT TERM
+	trap "${cleanup_func}" EXIT INT TERM
 }
 
 # Generate unique temporary directory
@@ -409,7 +409,7 @@ function util_script_dir() {
 		source="$(readlink "$source")"
 		[[ $source != /* ]] && source="$dir/$source"
 	done
-	cd -P "$(dirname "$source")" && pwd
+	echo "$(cd -P "$(dirname "$source")" && pwd)"
 }
 
 # Print colored text

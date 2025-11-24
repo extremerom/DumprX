@@ -1183,6 +1183,7 @@ elif [[ $(${BIN_7ZZ} l -ba "$FILEPATH" | grep "super.img") ]]; then
 	superchunk=$(find . -maxdepth 1 -type f -name "*super*chunk*" | sort)
 	if echo "$superchunk" | grep -q "sparsechunk"; then
 		log_info "Converting sparse super chunks..."
+		# Word splitting is intentional here - simg2img requires multiple files as separate arguments
 		# shellcheck disable=SC2086
 		"${SIMG2IMG}" ${superchunk} super.img.raw 2>/dev/null
 		rm -rf ./*super*chunk*
@@ -1198,6 +1199,7 @@ elif [[ $(find "${TMPDIR}" -type f -name "super*.*img" | wc -l) -ge 1 ]]; then
 	splitsupers=$(find . -maxdepth 1 -type f -name "super.[0-9]*.img" | sort)
 	if [[ -n "${splitsupers}" ]]; then
 		log_info "Creating super.img from split files..."
+		# Word splitting is intentional here - simg2img requires multiple files as separate arguments
 		# shellcheck disable=SC2086
 		"${SIMG2IMG}" ${splitsupers} super.img.raw 2>/dev/null
 		rm -rf ${splitsupers}
