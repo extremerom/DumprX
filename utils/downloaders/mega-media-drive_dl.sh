@@ -2,6 +2,42 @@
 
 # Most part of this program which is used to download files from Mega.NZ and MediaFire is under Copyright to stck-lzm at https://github.com/stck-lzm/badown
 
+# Source logger if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+if [[ -f "${PROJECT_ROOT}/lib/logger.sh" ]]; then
+	source "${PROJECT_ROOT}/lib/logger.sh"
+	USE_LOGGER=true
+else
+	USE_LOGGER=false
+fi
+
+# Logging wrapper functions
+log_msg() {
+	if [[ "${USE_LOGGER}" == "true" ]]; then
+		log_info "$*"
+	else
+		printf "%s\n" "$*"
+	fi
+}
+
+log_err() {
+	if [[ "${USE_LOGGER}" == "true" ]]; then
+		log_error "$*"
+	else
+		printf "ERROR: %s\n" "$*" >&2
+	fi
+}
+
+log_ok() {
+	if [[ "${USE_LOGGER}" == "true" ]]; then
+		log_success "$*"
+	else
+		printf "✓ %s\n" "$*"
+	fi
+}
+
 function url_str() {
     echo $1 | awk '{gsub("-","+"); gsub("_","/"); gsub(",",""); print}'
 }
@@ -66,20 +102,32 @@ function tree_gen() {
     fi
 }
 function file_downdec() {
-    printf "Downloading file %s...\n" "$2"
-    aria2c -c -s16 -x8 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false -o "$2".tmp "$1"
-    [[ ! -s "$2".tmp ]] && wget -O "$2".tmp -q --show-progress --progress=bar:force --no-check-certificate "$1"
-    cat "$2.tmp" | openssl enc -d -aes-128-ctr -K $3 -iv $4 >"$2"
-    rm -f "$2".tmp
+	log_msg "Downloading file: $2"
+	aria2c -c -s16 -x8 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false -o "$2".tmp "$1"
+	[[ ! -s "$2".tmp ]] && wget -O "$2".tmp -q --show-progress --progress=bar:force --no-check-certificate "$1"
+	if [[ -s "$2".tmp ]]; then
+		cat "$2.tmp" | openssl enc -d -aes-128-ctr -K $3 -iv $4 >"$2"
+		rm -f "$2".tmp
+		log_ok "Downloaded and decrypted: $2"
+	else
+		log_err "Failed to download: $2"
+		return 1
+	fi
 }
 function file_down() {
-    printf "Downloading file %s...\n" "$2"
-    aria2c -c -s16 -x8 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false -o "$2".tmp "$1"
-    [[ ! -s "$2".tmp ]] && wget -O "$2".tmp -q --show-progress --progress=bar:force --no-check-certificate "$1"
-    mv "$2".tmp "$2"
+	log_msg "Downloading file: $2"
+	aria2c -c -s16 -x8 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false -o "$2".tmp "$1"
+	[[ ! -s "$2".tmp ]] && wget -O "$2".tmp -q --show-progress --progress=bar:force --no-check-certificate "$1"
+	if [[ -s "$2".tmp ]]; then
+		mv "$2".tmp "$2"
+		log_ok "Downloaded: $2"
+	else
+		log_err "Failed to download: $2"
+		return 1
+	fi
 }
 function mega() {
-    printf "Mega.NZ Website Link Detected\n"
+	log_msg "Mega.NZ website link detected"
     mega_link_vars $1
     if [ "${fld: -1}" == "F" ] || [[ "$fld" == *"folder"* ]]; then
         json_req '[{"a":"f","c":1,"ca":1,"r":1}]' "?id=&n=$id" >.badown.tmp
@@ -115,19 +163,25 @@ function mega() {
     fi
 }
 function mediafire() {
-    printf "Mediafire Website Link Detected\n"
-    file_url=$(wget -q -O- $1 |
-        grep :\/\/download |
-        awk -F'"' '{print $2}')
-    file_name=$(printf '%b' "$(echo $file_url |
-        awk -F'/' '{gsub("%","\\x");gsub("+"," ");print $NF}')")
-    file_down $file_url "$file_name"
+	log_msg "Mediafire website link detected"
+	file_url=$(wget -q -O- $1 |
+		grep :\/\/download |
+		awk -F'"' '{print $2}')
+	file_name=$(printf '%b' "$(echo $file_url |
+		awk -F'/' '{gsub("%","\\x");gsub("+"," ");print $NF}')")
+	file_down $file_url "$file_name"
 }
 function gdrive() {
-    printf "Google Drive URL detected\n"
-    FILE_ID="$(echo "${1:?}" | sed -r 's/.*([0-9a-zA-Z_-]{33}).*/\1/')"
-    CONFIRM=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')
-    aria2c -c -s16 -x16 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID"
+	log_msg "Google Drive URL detected"
+	FILE_ID="$(echo "${1:?}" | sed -r 's/.*([0-9a-zA-Z_-]{33}).*/\1/')"
+	CONFIRM=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')
+	aria2c -c -s16 -x16 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID"
+	if [[ $? -eq 0 ]]; then
+		log_ok "Google Drive download completed"
+	else
+		log_err "Google Drive download failed"
+		return 1
+	fi
 }
 
 if [[ "$1" == *"mega"* ]]; then
