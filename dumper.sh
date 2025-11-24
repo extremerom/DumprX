@@ -539,7 +539,7 @@ function extract_with_mount() {
 	
 	# Copy files from mount to temporary directory
 	log_debug "Copying files from mount..."
-	sudo cp -rf "${temp_mount}/"* "${temp_output}/" 2>/dev/null
+	sudo cp -rf "${temp_mount}/." "${temp_output}/" 2>/dev/null
 	local cp_result=$?
 	
 	# Unmount the image
@@ -549,7 +549,7 @@ function extract_with_mount() {
 	if [ ${cp_result} -eq 0 ]; then
 		# Move files from temporary to final output directory
 		mkdir -p "${output_dir}" 2>/dev/null
-		sudo cp -rf "${temp_output}/"* "${output_dir}/" 2>/dev/null
+		sudo cp -rf "${temp_output}/." "${output_dir}/" 2>/dev/null
 		sudo rm -rf "${temp_output}"
 		
 		# Fix permissions
