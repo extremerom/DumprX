@@ -64,6 +64,10 @@ Help Context:
   - If only Token is given but Organization is not, your Git Username will be used.
 - Copy your Telegram Token in a file named .tg_token and Telegram Chat/Channel ID in another file named .tg_chat file if you want to publish the uploading info in Telegram.
 
+## Troubleshooting
+
+If you encounter HTTP 500 errors or other issues during upload, please refer to the [Troubleshooting Guide](TROUBLESHOOTING.md).
+
 ## Main Scripture Credit
 
 As mentioned above, this toolkit is entirely focused on improving the Original Firmware Dumper available:  [Dumpyara](https://github.com/AndroidDumps/) [Phoenix Firmware Dumper](https://github.com/DroidDumps)
