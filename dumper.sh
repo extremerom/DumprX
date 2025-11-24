@@ -531,11 +531,31 @@ function extract_with_mount() {
 	fi
 	
 	# Copy contents with better error handling and chunking for large directories
-	log_debug "Copying files from mount (this may take a while for large partitions)..."
+	log_info "Copying files from mount (this may take a while for large partitions)..."
 	
-	# Use rsync if available (better for large transfers), otherwise use cp with timeout
+	# Create output directory
+	mkdir -p "${output_dir}" 2>/dev/null
+	
+	# Method 1: Try tar-based copy (most reliable for large filesystems)
+	log_debug "Trying tar-based copy method..."
+	if (cd "${temp_mount}" && sudo tar cf - . 2>/dev/null) | (cd "${output_dir}" && sudo tar xf - 2>/dev/null); then
+		log_debug "Successfully copied files using tar"
+		sudo umount "${temp_mount}" 2>/dev/null
+		rm -rf "${temp_mount}"
+		
+		# Fix permissions
+		sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
+		chmod -R u+rwX "${output_dir}/" 2>/dev/null
+		
+		return 0
+	fi
+	
+	# Method 2: Try rsync without progress (less memory intensive)
 	if command -v rsync >/dev/null 2>&1; then
-		if timeout 600 sudo rsync -a --info=progress2 "${temp_mount}/" "${output_dir}/" 2>/dev/null; then
+		log_debug "Trying rsync without progress reporting..."
+		# Remove --info=progress2 to reduce memory usage
+		# Increase timeout for large partitions
+		if timeout 1800 sudo rsync -a --no-inc-recursive "${temp_mount}/" "${output_dir}/" 2>/dev/null; then
 			log_debug "Successfully copied files from mount using rsync"
 			sudo umount "${temp_mount}" 2>/dev/null
 			rm -rf "${temp_mount}"
@@ -550,10 +570,10 @@ function extract_with_mount() {
 		fi
 	fi
 	
-	# Fallback to chunked cp with tar
-	log_debug "Trying tar-based copy method..."
-	if (cd "${temp_mount}" && sudo tar cf - .) | (cd "${output_dir}" && sudo tar xf -) 2>/dev/null; then
-		log_debug "Successfully copied files using tar"
+	# Method 3: Chunked copy using find and cpio (memory efficient)
+	log_debug "Trying find+cpio method..."
+	if (cd "${temp_mount}" && sudo find . -print0 2>/dev/null | sudo cpio --pass-through --make-directories --null --preserve-modification-time "${output_dir}" 2>/dev/null); then
+		log_debug "Successfully copied files using find+cpio"
 		sudo umount "${temp_mount}" 2>/dev/null
 		rm -rf "${temp_mount}"
 		
@@ -564,10 +584,18 @@ function extract_with_mount() {
 		return 0
 	fi
 	
-	# Final fallback - basic cp with find (slower but more reliable)
-	log_debug "Trying find-based copy method..."
-	if sudo find "${temp_mount}" -mindepth 1 -maxdepth 1 -exec cp -rf {} "${output_dir}/" \; 2>/dev/null; then
-		log_debug "Successfully copied files using find"
+	# Method 4: Basic cp with parallel processing for top-level directories
+	log_debug "Trying parallel directory copy method..."
+	local copy_success=true
+	while IFS= read -r -d '' item; do
+		if ! sudo cp -a "${item}" "${output_dir}/" 2>/dev/null; then
+			copy_success=false
+			break
+		fi
+	done < <(sudo find "${temp_mount}" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+	
+	if ${copy_success}; then
+		log_debug "Successfully copied files using parallel cp"
 		sudo umount "${temp_mount}" 2>/dev/null
 		rm -rf "${temp_mount}"
 		
