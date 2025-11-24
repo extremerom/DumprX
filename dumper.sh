@@ -296,7 +296,6 @@ else
 					detox -r "${FILEPATH}" 2>/dev/null
 					# Try inline-detox if available, otherwise keep the detoxed path
 					if util_command_exists inline-detox; then
-						local detoxed_path
 						detoxed_path=$(echo "${FILEPATH}" | inline-detox 2>/dev/null)
 						if [[ -n "${detoxed_path}" ]] && [[ -e "${detoxed_path}" ]]; then
 							FILEPATH="${detoxed_path}"
@@ -380,6 +379,301 @@ function superimage_extract() {
 	log_success "Super image extraction completed"
 }
 
+# ============================================================================
+# IMAGE EXTRACTION FUNCTIONS
+# ============================================================================
+
+# Detect filesystem type of an image
+function detect_filesystem() {
+	local img_file="$1"
+	local fs_type=""
+	
+	# Check for sparse image first
+	if file "${img_file}" | grep -q "Android sparse image"; then
+		echo "sparse"
+		return 0
+	fi
+	
+	# Try to detect filesystem using file command
+	local file_output
+	file_output=$(file "${img_file}")
+	
+	if echo "${file_output}" | grep -qi "ext[2-4]"; then
+		echo "ext4"
+	elif echo "${file_output}" | grep -qi "erofs"; then
+		echo "erofs"
+	elif echo "${file_output}" | grep -qi "f2fs"; then
+		echo "f2fs"
+	elif echo "${file_output}" | grep -qi "squashfs"; then
+		echo "squashfs"
+	else
+		# Try fsck.erofs to detect EROFS
+		if "${FSCK_EROFS}" --help >/dev/null 2>&1; then
+			if "${FSCK_EROFS}" "${img_file}" >/dev/null 2>&1; then
+				echo "erofs"
+				return 0
+			fi
+		fi
+		echo "unknown"
+	fi
+}
+
+# Extract partition using 7z
+function extract_with_7z() {
+	local partition="$1"
+	local img_file="$2"
+	local output_dir="$3"
+	
+	log_debug "Attempting extraction with 7z..."
+	${BIN_7ZZ} x -snld "${img_file}" -y -o"${output_dir}/" >/dev/null 2>&1
+	return $?
+}
+
+# Extract partition using fsck.erofs
+function extract_with_erofs() {
+	local partition="$1"
+	local img_file="$2"
+	local output_dir="$3"
+	
+	log_debug "Attempting extraction with fsck.erofs..."
+	"${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1 | grep -v "^$"
+	return $?
+}
+
+# Extract partition using mount loop
+function extract_with_mount() {
+	local partition="$1"
+	local img_file="$2"
+	local output_dir="$3"
+	local temp_mount="${output_dir}_mount_tmp"
+	
+	log_debug "Attempting extraction with mount loop..."
+	
+	# Create temporary mount point
+	mkdir -p "${temp_mount}" 2>/dev/null
+	
+	# Try to mount
+	if sudo mount -o loop,ro -t auto "${img_file}" "${temp_mount}" 2>/dev/null; then
+		log_debug "Successfully mounted ${partition}"
+		
+		# Copy contents
+		if sudo cp -rf "${temp_mount}/"* "${output_dir}/" 2>/dev/null; then
+			log_debug "Successfully copied files from mount"
+			
+			# Unmount
+			sudo umount "${temp_mount}" 2>/dev/null
+			rm -rf "${temp_mount}"
+			
+			# Fix permissions
+			sudo chown -R "$(whoami)" "${output_dir}/"* 2>/dev/null
+			chmod -R u+rwX "${output_dir}/"* 2>/dev/null
+			
+			return 0
+		else
+			log_warn "Failed to copy files from mount"
+			sudo umount "${temp_mount}" 2>/dev/null
+			rm -rf "${temp_mount}"
+			return 1
+		fi
+	else
+		log_warn "Failed to mount ${partition}"
+		rm -rf "${temp_mount}"
+		return 1
+	fi
+}
+
+# Extract a single partition image with automatic method detection
+function extract_partition_image() {
+	local partition="$1"
+	local img_file="${partition}.img"
+	local output_dir="${partition}"
+	
+	# Skip if image doesn't exist
+	if [[ ! -f "${img_file}" ]]; then
+		return 0
+	fi
+	
+	# Skip special partitions
+	if echo "${partition}" | grep -q "boot\|recovery\|dtbo\|vendor_boot\|tz\|modem"; then
+		log_debug "Skipping special partition: ${partition}"
+		return 0
+	fi
+	
+	log_step "Extracting ${partition} partition"
+	
+	# Create output directory
+	mkdir -p "${output_dir}" 2>/dev/null || rm -rf "${output_dir:?}"/*
+	
+	# Detect filesystem
+	local fs_type
+	fs_type=$(detect_filesystem "${img_file}")
+	log_info "Detected filesystem: ${fs_type}"
+	
+	# Handle sparse images first
+	if [[ "${fs_type}" == "sparse" ]]; then
+		log_info "Converting sparse image to raw..."
+		if "${SIMG2IMG}" "${img_file}" "${img_file}.raw" 2>/dev/null; then
+			mv "${img_file}.raw" "${img_file}"
+			fs_type=$(detect_filesystem "${img_file}")
+			log_success "Sparse image converted, new filesystem: ${fs_type}"
+		else
+			log_warn "Failed to convert sparse image"
+		fi
+	fi
+	
+	# Try extraction methods in order
+	local extraction_success=false
+	
+	# Method 1: Try 7z first (works for ext4, some others)
+	if [[ "${fs_type}" == "ext4" ]] || [[ "${fs_type}" == "unknown" ]]; then
+		if extract_with_7z "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with 7z"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "7z extraction failed for ${partition}"
+		fi
+	fi
+	
+	# Method 2: Try fsck.erofs for EROFS images
+	if [[ "${fs_type}" == "erofs" ]]; then
+		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with fsck.erofs"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "fsck.erofs extraction failed for ${partition}"
+		fi
+	fi
+	
+	# Method 3: Try mount loop as last resort
+	if ! ${extraction_success}; then
+		log_info "Trying mount loop extraction..."
+		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with mount loop"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "Mount loop extraction failed for ${partition}"
+		fi
+	fi
+	
+	# If all methods failed
+	if ! ${extraction_success}; then
+		log_error "Failed to extract ${partition} partition"
+		log_error "Filesystem: ${fs_type}"
+		log_error "Methods tried: 7z, fsck.erofs, mount loop"
+		
+		# Provide helpful error messages based on filesystem
+		case "${fs_type}" in
+			"erofs")
+				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
+				;;
+			"f2fs")
+				log_error "F2FS requires Linux kernel 5.15+ for proper support"
+				;;
+			"unknown")
+				log_error "Unknown filesystem - image may be encrypted or corrupted"
+				;;
+		esac
+		
+		# Keep the image file for manual inspection
+		log_info "Image file preserved for manual inspection: ${img_file}"
+		return 1
+	fi
+	
+	return 0
+}
+
+# Extract boot image components
+function extract_boot_image() {
+	local boot_type="$1"  # "boot", "vendor_boot", "recovery", "init_boot"
+	local boot_img="${boot_type}.img"
+	
+	if [[ ! -f "${boot_img}" ]]; then
+		return 0
+	fi
+	
+	log_step "Extracting ${boot_type} image"
+	
+	# Create directories
+	mkdir -p "${boot_type}" "${boot_type}img" "${boot_type}dts" "${boot_type}RE" 2>/dev/null
+	
+	# Extract DTB
+	log_debug "Extracting device tree blobs..."
+	if uvx -q extract-dtb "${boot_img}" -o "${boot_type}img" >/dev/null 2>&1; then
+		# Convert DTB to DTS
+		find "${boot_type}img" -name '*.dtb' -type f 2>/dev/null | while read -r dtb_file; do
+			local dtb_name
+			dtb_name=$(basename "${dtb_file}")
+			local dts_name="${dtb_name/.dtb/.dts}"
+			"${DTC}" -q -s -f -I dtb -O dts -o "${boot_type}dts/${dts_name}" "${dtb_file}" 2>/dev/null
+		done
+		log_debug "Device tree blobs extracted and converted"
+	fi
+	
+	# Unpack boot image
+	log_debug "Unpacking boot image structure..."
+	if bash "${UNPACKBOOT}" "${boot_img}" "${boot_type}" 2>/dev/null; then
+		log_debug "Boot image unpacked successfully"
+	fi
+	
+	# Extract kernel config if present
+	if [[ "${boot_type}" == "boot" ]] || [[ "${boot_type}" == "vendor_boot" ]]; then
+		log_debug "Extracting kernel configuration..."
+		bash "${EXTRACT_IKCONFIG}" "${boot_img}" > "${boot_type}RE/ikconfig" 2>/dev/null
+		[[ ! -s "${boot_type}RE/ikconfig" ]] && rm -f "${boot_type}RE/ikconfig" 2>/dev/null
+		
+		# Extract kallsyms
+		log_debug "Extracting kernel symbols..."
+		if [[ -f "${boot_type}/kernel" ]]; then
+			python3 "${KALLSYMS_FINDER}" "${boot_type}/kernel" > "${boot_type}RE/kernel_kallsyms.txt" 2>/dev/null
+		else
+			python3 "${KALLSYMS_FINDER}" "${boot_img}" > "${boot_type}RE/${boot_type}_kallsyms.txt" 2>/dev/null
+		fi
+		
+		# Extract vmlinux
+		log_debug "Extracting vmlinux ELF..."
+		python3 "${VMLINUX2ELF}" "${boot_img}" "${boot_type}RE/${boot_type}.elf" 2>/dev/null
+		
+		# Extract DTB from unpacked boot
+		if [[ -f "${boot_type}/dtb.img" ]]; then
+			mkdir -p "dtbimg" 2>/dev/null
+			uvx -q extract-dtb "${boot_type}/dtb.img" -o "dtbimg" >/dev/null 2>&1
+		fi
+	fi
+	
+	log_success "${boot_type^} image extracted successfully"
+}
+
+# Extract DTBO image
+function extract_dtbo_image() {
+	if [[ ! -f "dtbo.img" ]]; then
+		return 0
+	fi
+	
+	log_step "Extracting DTBO image"
+	
+	mkdir -p "dtbo" "dtbodts" 2>/dev/null
+	
+	# Extract DTB overlays
+	if uvx -q extract-dtb "dtbo.img" -o "dtbo" >/dev/null 2>&1; then
+		# Convert DTB to DTS
+		find "dtbo" -name '*.dtb' -type f 2>/dev/null | while read -r dtb_file; do
+			local dtb_name
+			dtb_name=$(basename "${dtb_file}")
+			local dts_name="${dtb_name/.dtb/.dts}"
+			"${DTC}" -q -s -f -I dtb -O dts -o "dtbodts/${dts_name}" "${dtb_file}" 2>/dev/null
+		done
+		log_success "DTBO extracted successfully"
+	else
+		log_warn "Failed to extract DTBO"
+	fi
+}
+
 log_header "Firmware Extraction Process"
 log_info "Output directory: ${OUTDIR}"
 cd "${TMPDIR}/" || exit
@@ -406,54 +700,57 @@ if [[ $(head -c12 "${FILEPATH}" 2>/dev/null | tr -d '\0') == "OPPOENCRYPT!" ]] |
 fi
 # Oneplus .ops Check
 if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q ".*.ops" 2>/dev/null; then
-	printf "Oppo/Oneplus ops Firmware Detected Extracting...\n"
+	log_step "Oppo/Oneplus ops firmware detected"
+	log_info "Extracting ops file from archive..."
 	foundops=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep ".*.ops")
 	${BIN_7ZZ} e -y -- "${FILEPATH}" "${foundops}" */"${foundops}" 2>/dev/null >> "${TMPDIR}"/zip.log
 	mkdir -p "${INPUTDIR}" 2>/dev/null && rm -rf -- "${INPUTDIR:?}"/* 2>/dev/null
 	mv "$(echo "${foundops}" | gawk -F['/'] '{print $NF}')" "${INPUTDIR}"/
 	sleep 1s
-	printf "Reloading the extracted OPS\n"
+	log_info "Re-loading extracted ops file..."
 	cd "${PROJECT_DIR}"/ || exit
 	( bash "${0}" "${PROJECT_DIR}/input/${foundops}" 2>/dev/null) || exit 1
 	exit
 fi
 if [[ "${EXTENSION}" == "ops" ]]; then
-	printf "Oppo/Oneplus ops Detected.\n"
+	log_step "Oppo/Oneplus ops firmware detected"
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/"${FILE}" 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/"${FILE}"
-	printf "Decrypting ops & extracing...\n"
+	log_info "Decrypting and extracting ops file..."
 	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "${OPSDECRYPT}" decrypt "${TMPDIR}"/"${FILE}"
 	mkdir -p "${INPUTDIR}" 2>/dev/null && rm -rf -- "${INPUTDIR:?}"/* 2>/dev/null
 	mv "${TMPDIR}"/extract/* "${INPUTDIR}"/
 	rm -rf "${TMPDIR:?}"/*
-	printf "Re-Loading The Decrypted Content.\n"
+	log_info "Re-loading decrypted content..."
 	cd "${PROJECT_DIR}"/ || exit
 	( bash "${0}" "${PROJECT_DIR}/input/" 2>/dev/null || bash "${0}" "${INPUTDIR}"/"${FILE%.*}".zip ) || exit 1
 	exit
 fi
 # Oppo .ofp Check
 if ${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep -q ".*.ofp" 2>/dev/null; then
-	printf "Oppo ofp Detected.\n"
+	log_step "Oppo ofp firmware detected"
+	log_info "Extracting ofp file from archive..."
 	foundofp=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep ".*.ofp")
 	${BIN_7ZZ} e -y -- "${FILEPATH}" "${foundofp}" */"${foundofp}" 2>/dev/null >> "${TMPDIR}"/zip.log
 	mkdir -p "${INPUTDIR}" 2>/dev/null && rm -rf -- "${INPUTDIR:?}"/* 2>/dev/null
 	mv "$(echo "${foundofp}" | gawk -F['/'] '{print $NF}')" "${INPUTDIR}"/
 	sleep 1s
-	printf "Reloading the extracted OFP\n"
+	log_info "Re-loading extracted ofp file..."
 	cd "${PROJECT_DIR}"/ || exit
 	( bash "${0}" "${PROJECT_DIR}/input/${foundofp}" 2>/dev/null) || exit 1
 	exit
 fi
 if [[ "${EXTENSION}" == "ofp" ]]; then
-	printf "Oppo ofp Detected.\n"
+	log_step "Oppo ofp firmware detected"
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/"${FILE}" 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/"${FILE}"
-	printf "Decrypting ofp & extracing...\n"
+	log_info "Decrypting and extracting ofp file..."
 	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "$OFP_QC_DECRYPT" "${TMPDIR}"/"${FILE}" out
 	if [[ ! -f "${TMPDIR}"/out/boot.img || ! -f "${TMPDIR}"/out/userdata.img ]]; then
+		log_debug "Trying MTK decryption method..."
 		uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "$OFP_MTK_DECRYPT" "${TMPDIR}"/"${FILE}" out
 		if [[ ! -f "${TMPDIR}"/out/boot.img || ! -f "${TMPDIR}"/out/userdata.img ]]; then
-			printf "ofp decryption error.\n" && exit 1
+			log_error "OFP decryption failed" && exit 1
 		fi
 	fi
 	mkdir -p "${INPUTDIR}" 2>/dev/null && rm -rf -- "${INPUTDIR:?}"/* 2>/dev/null
@@ -461,59 +758,65 @@ if [[ "${EXTENSION}" == "ofp" ]]; then
 		mv "${TMPDIR}"/out/* "${INPUTDIR}"/
 	fi
 	rm -rf "${TMPDIR:?}"/*
-	printf "Re-Loading The Decrypted Contents.\n"
+	log_info "Re-loading decrypted content..."
 	cd "${PROJECT_DIR}"/ || exit
 	( bash "${0}" "${PROJECT_DIR}/input/" ) || exit 1
 	exit
 fi
 # Xiaomi .tgz Check
 if [[ "${FILE##*.}" == "tgz" || "${FILE#*.}" == "tar.gz" ]]; then
-	printf "Xiaomi gzipped tar archive found.\n"
+	log_step "Xiaomi gzipped tar archive detected"
 	mkdir -p "${INPUTDIR}" 2>/dev/null
+	log_info "Extracting gzipped tar archive..."
 	if [[ -f "${INPUTDIR}"/"${FILE}" ]]; then
-		tar xzvf "${INPUTDIR}"/"${FILE}" -C "${INPUTDIR}"/ --transform='s/.*\///'
+		tar xzf "${INPUTDIR}"/"${FILE}" -C "${INPUTDIR}"/ --transform='s/.*\///' 2>/dev/null
 		rm -rf -- "${INPUTDIR:?}"/"${FILE}"
 	elif [[ -f "${FILEPATH}" ]]; then
-		tar xzvf "${FILEPATH}" -C "${INPUTDIR}"/ --transform='s/.*\///'
+		tar xzf "${FILEPATH}" -C "${INPUTDIR}"/ --transform='s/.*\///' 2>/dev/null
 	fi
-	find "${INPUTDIR}"/ -type d -empty -delete     # Delete Empth Folder Leftover
+	find "${INPUTDIR}"/ -type d -empty -delete     # Delete Empty Folder Leftover
 	rm -rf "${TMPDIR:?}"/*
-	printf "Re-Loading The Extracted Contents.\n"
+	log_success "Archive extracted successfully"
+	log_info "Re-loading extracted content..."
 	cd "${PROJECT_DIR}"/ || exit
 	( bash "${0}" "${PROJECT_DIR}/input/" ) || exit 1
 	exit
 fi
 # LG KDZ Check
 if echo "${FILEPATH}" | grep -q ".*.kdz" || [[ "${EXTENSION}" == "kdz" ]]; then
-	printf "LG KDZ Detected.\n"
+	log_step "LG KDZ firmware detected"
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/ 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/
+	log_info "Extracting KDZ archive..."
 	python3 "${KDZ_EXTRACT}" -f "${FILE}" -x -o "./" 2>/dev/null
 	DZFILE=$(ls -- *.dz)
-	printf "Extracting All Partitions As Individual Images.\n"
+	log_info "Extracting all partitions as individual images..."
 	python3 "${DZ_EXTRACT}" -f "${DZFILE}" -s -o "./" 2>/dev/null
 	rm -f "${TMPDIR}"/"${FILE}" "${TMPDIR}"/"${DZFILE}" 2>/dev/null
 	# dzpartitions="gpt_main persist misc metadata vendor system system_other product userdata gpt_backup tz boot dtbo vbmeta cust oem odm factory modem NON-HLOS"
 	find "${TMPDIR}" -maxdepth 1 -type f -name "*.image" | while read -r i; do mv "${i}" "${i/.image/.img}" 2>/dev/null; done
 	find "${TMPDIR}" -maxdepth 1 -type f -name "*_a.img" | while read -r i; do mv "${i}" "${i/_a.img/.img}" 2>/dev/null; done
 	find "${TMPDIR}" -maxdepth 1 -type f -name "*_b.img" -exec rm -rf {} \;
+	log_success "LG KDZ extraction completed"
 fi
 # HTC RUU Check
 if echo "${FILEPATH}" | grep -i "^ruu_" | grep -q -i "exe$" || [[ "${EXTENSION}" == "exe" ]]; then
-	printf "HTC RUU Detected.\n"
+	log_step "HTC RUU firmware detected"
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/ || cp -a "${FILEPATH}" "${TMPDIR}"/
-	printf "Extracting System And Firmware Partitions...\n"
+	log_info "Extracting system and firmware partitions..."
 	"${RUUDECRYPT}" -s "${FILE}" 2>/dev/null
 	"${RUUDECRYPT}" -f "${FILE}" 2>/dev/null
 	find "${TMPDIR}"/OUT* -name "*.img" -exec mv {} "${TMPDIR}"/ \;
+	log_success "HTC RUU extraction completed"
 fi
 
 # Amlogic upgrade package (AML) Check
 if [[ $(${BIN_7ZZ} l -ba "${FILEPATH}" | grep -i aml) ]]; then
-	echo "AML Detected"
+	log_step "Amlogic upgrade package detected"
 	cp "${FILEPATH}" ${TMPDIR}
 	FILE="${TMPDIR}/$(basename ${FILEPATH})"
+	log_info "Extracting AML package..."
 	${BIN_7ZZ} e -y "${FILEPATH}" >> ${TMPDIR}/zip.log
 	"${AML_EXTRACT}" $(find . -type f -name "*aml*.img")
 	rename 's/.PARTITION$/.img/' *.PARTITION
@@ -526,14 +829,17 @@ if [[ $(${BIN_7ZZ} l -ba "${FILEPATH}" | grep -i aml) ]]; then
 		[[ -e "${TMPDIR}/${partition}.img" ]] && mv "${TMPDIR}/${partition}.img" "${OUTDIR}/${partition}.img"
 	done
 	rm -rf ${TMPDIR}
+	log_success "AML package extraction completed"
 fi
 
 # Extract & Move Raw Otherpartitons To OUTDIR
 if [[ -f "${FILEPATH}" ]]; then
+	other_partition_count=0
 	for otherpartition in ${OTHERPARTITIONS}; do
 		filename=${otherpartition%:*} && outname=${otherpartition#*:}
 		if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "${filename}"; then
-			printf "%s Detected For %s\n" "${filename}" "${outname}"
+			((other_partition_count++))
+			log_debug "Extracting ${filename} as ${outname}"
 			foundfile=$(${BIN_7ZZ} l -ba "${FILEPATH}" | grep "${filename}" | awk '{print $NF}')
 			${BIN_7ZZ} e -y -- "${FILEPATH}" "${foundfile}" */"${foundfile}" 2>/dev/null >> "${TMPDIR}"/zip.log
 			output=$(ls -- "${filename}"* 2>/dev/null)
@@ -542,11 +848,12 @@ if [[ -f "${FILEPATH}" ]]; then
 			[[ ! -s "${OUTDIR}"/"${outname}".img && -f "${TMPDIR}"/"${outname}".img ]] && mv "${outname}".img "${OUTDIR}"/"${outname}".img
 		fi
 	done
+	[[ ${other_partition_count} -gt 0 ]] && log_info "Extracted ${other_partition_count} additional partition(s)"
 fi
 
 # Extract/Put Image/Extra Files In TMPDIR
 if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system.new.dat*" -print | wc -l) -ge 1 ]]; then
-	printf "A-only DAT-Formatted OTA detected.\n"
+	log_step "A-only DAT-formatted OTA detected"
 	for partition in $PARTITIONS; do
 		${BIN_7ZZ} e -y "${FILEPATH}" ${partition}.new.dat* ${partition}.transfer.list ${partition}.img 2>/dev/null >> ${TMPDIR}/zip.log
 		${BIN_7ZZ} e -y "${FILEPATH}" ${partition}.*.new.dat* ${partition}.*.transfer.list ${partition}.*.img 2>/dev/null >> ${TMPDIR}/zip.log
@@ -560,26 +867,35 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 			cat ${partition}.new.dat.{0..999} 2>/dev/null >> ${partition}.new.dat
 			rm -rf ${partition}.new.dat.{0..999}
 		fi
-		ls | grep "\.new\.dat" | while read i; do
-			line=$(echo "$i" | cut -d"." -f1)
-			if [[ $(echo "$i" | grep "\.dat\.xz") ]]; then
+		dat_files=()
+		while IFS= read -r -d '' file; do
+			dat_files+=("$file")
+		done < <(find . -maxdepth 1 -name "*.new.dat*" -print0)
+		
+		for i in "${dat_files[@]}"; do
+			line=$(basename "$i" | cut -d"." -f1)
+			if [[ "$i" =~ \.dat\.xz$ ]]; then
 				${BIN_7ZZ} e -y "$i" 2>/dev/null >> ${TMPDIR}/zip.log
 				rm -rf "$i"
 			fi
-			if [[ $(echo "$i" | grep "\.dat\.br") ]]; then
-				echo "Converting brotli ${partition} dat to normal"
+			if [[ "$i" =~ \.dat\.br$ ]]; then
+				log_debug "Converting brotli ${line} dat to normal"
 				brotli -d "$i"
 				rm -f "$i"
 			fi
-			echo "Extracting ${partition}"
-			python3 ${SDAT2IMG} ${line}.transfer.list ${line}.new.dat "${OUTDIR}"/${line}.img > ${TMPDIR}/extract.log
-			rm -rf ${line}.transfer.list ${line}.new.dat
+			if [[ "$i" =~ \.new\.dat$ ]]; then
+				log_debug "Extracting ${line} partition"
+				python3 ${SDAT2IMG} ${line}.transfer.list ${line}.new.dat "${OUTDIR}"/${line}.img > ${TMPDIR}/extract.log
+				rm -rf ${line}.transfer.list ${line}.new.dat
+			fi
 		done
 	done
+	log_success "DAT extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep rawprogram || [[ $(find "${TMPDIR}" -type f -name "*rawprogram*" | wc -l) -ge 1 ]]; then
-	echo "QFIL Detected"
+	log_step "QFIL firmware detected"
 	rawprograms=$(${BIN_7ZZ} l -ba ${FILEPATH} | gawk '{ print $NF }' | grep rawprogram)
 	${BIN_7ZZ} e -y ${FILEPATH} $rawprograms 2>/dev/null >> ${TMPDIR}/zip.log
+	log_info "Extracting partitions from QFIL package..."
 	for partition in $PARTITIONS; do
 		partitionsonzip=$(${BIN_7ZZ} l -ba ${FILEPATH} | gawk '{ print $NF }' | grep $partition)
 		if [[ ! $partitionsonzip == "" ]]; then
@@ -598,17 +914,21 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep rawprogram || [[ $(find "${TMPDIR}" -
 	if [[ -f super.img ]]; then
 		superimage_extract || exit 1
 	fi
+	log_success "QFIL extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q ".*.nb0" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "*.nb0*" | wc -l) -ge 1 ]]; then
-	printf "nb0-Formatted Firmware Detected.\n"
+	log_step "nb0-formatted firmware detected"
 	if [[ -f "${FILEPATH}" ]]; then
 		to_extract=$(${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".*.nb0" | gawk '{print $NF}')
 		${BIN_7ZZ} e -y -- "${FILEPATH}" "${to_extract}" 2>/dev/null >> "${TMPDIR}"/zip.log
 	else
 		find "${TMPDIR}" -type f -name "*.nb0*" -exec mv {} . \; 2>/dev/null
 	fi
+	log_info "Extracting nb0 firmware..."
 	"${NB0_EXTRACT}" "${to_extract}" "${TMPDIR}"
+	log_success "nb0 extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep system | grep chunk | grep -q -v ".*\.so$" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "*system*chunk*" | wc -l) -ge 1 ]]; then
-	printf "Chunk Detected.\n"
+	log_step "Chunk-formatted firmware detected"
+	log_info "Extracting chunk files..."
 	for partition in ${PARTITIONS}; do
 		if [[ -f "${FILEPATH}" ]]; then
 			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep "${partition}".img)
@@ -628,9 +948,11 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep system | grep chunk | grep -q -v ".*\
 			rm -rf -- *"${partition}"*chunk* 2>/dev/null
 		fi
 	done
+	log_success "Chunk extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep -q "system_new.img\|^system.img\|\/system.img\|\/system_image.emmc.img\|^system_image.emmc.img" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system*.img" | wc -l) -ge 1 ]]; then
-	printf "Image File detected.\n"
+	log_step "Image files detected"
 	if [[ -f "${FILEPATH}" ]]; then
+		log_info "Extracting image files..."
 		${BIN_7ZZ} x -y "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
 	fi
 	for f in "${TMPDIR}"/*; do detox -r "${f}" 2>/dev/null; done
@@ -643,9 +965,11 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep -q "system_new.i
 	find "${TMPDIR}" -type f -iname "*Release_Note.txt" -exec mv {} "${OUTDIR}"/ \;
 	find "${TMPDIR}" -type f ! -name "*img*" -exec rm -rf {} \;	# delete other files
 	find "${TMPDIR}" -maxdepth 3 -type f -name "*.img" -exec mv {} . \; 2>/dev/null
+	log_success "Image extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.sin\|.*system_.*\.sin" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system*.sin" | wc -l) -ge 1 ]]; then
-	printf "sin Image Detected.\n"
+	log_step "Sony sin image detected"
 	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x -y "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
+	log_info "Processing sin files..."
 	# Remove Unnecessary Filename Part
 	to_remove=$(find . -type f | grep ".*boot_.*\.sin" | gawk '{print $NF}' | sed -e 's/boot_\(.*\).sin/\1/')
 	[[ -z "$to_remove" ]] && to_remove=$(find . -type f | grep ".*cache_.*\.sin" | gawk '{print $NF}' | sed -e 's/cache_\(.*\).sin/\1/')
@@ -657,27 +981,33 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.sin\|.*system_.*\.sin" 2>/
 	foundsuperinsin=$(find "${TMPDIR}" -maxdepth 1 -type f -name "super_*.img")
 	if [ ! -z $foundsuperinsin ]; then
 		mv $(ls ${TMPDIR}/super_*.img) "${TMPDIR}/super.img"
-		echo "super image inside a sin detected"
+		log_info "Super image detected inside sin file"
 		superimage_extract || exit 1
 	fi
+	log_success "sin extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".pac$" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "*.pac" | wc -l) -ge 1 ]]; then
-	printf "pac Detected.\n"
+	log_step "PAC archive detected"
 	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x -y "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
 	for f in "${TMPDIR}"/*; do detox -r "${f}"; done
 	pac_list=$(find . -type f -name "*.pac" | cut -d'/' -f'2-' | sort)
+	log_info "Extracting $(echo "${pac_list}" | wc -l) PAC file(s)..."
 	for file in ${pac_list}; do
 		python3 "${PACEXTRACTOR}" "${file}" $(pwd)
 	done
 	if [[ -f super.img ]]; then
 		superimage_extract || exit 1
 	fi
+	log_success "PAC extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.bin" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system.bin" | wc -l) -ge 1 ]]; then
-	printf "bin Images Detected\n"
+	log_step "Binary images detected"
 	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x -y "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
+	log_info "Converting .bin files to .img..."
 	find "${TMPDIR}" -mindepth 2 -type f -name "*.bin" -exec mv {} . \;	# move .img in sub-dir to ${TMPDIR}
 	find "${TMPDIR}" -maxdepth 1 -type f -name "*.bin" | while read -r i; do mv "${i}" "${i/\.bin/.img}" 2>/dev/null; done	# proper names
+	log_success "Binary image conversion completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system-p" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system-p*" | wc -l) -ge 1 ]]; then
-	printf "P-Suffix Images Detected\n"
+	log_step "P-suffix images detected"
+	log_info "Processing p-suffix partitions..."
 	for partition in ${PARTITIONS}; do
 		if [[ -f "${FILEPATH}" ]]; then
 			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep "${partition}-p")
@@ -687,13 +1017,15 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system-p" 2>/dev/null || [[ $(fin
 		fi
 	[[ -n "${foundpartitions}" ]] && mv "$(ls "${partition}"-p*)" "${partition}".img
 	done
+	log_success "P-suffix extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system-sign.img" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system-sign.img" | wc -l) -ge 1 ]]; then
-	printf "Signed Images Detected\n"
+	log_step "Signed images detected"
 	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x -y "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
 	for f in "${TMPDIR}"/*; do detox -r "${f}"; done
 	for partition in ${PARTITIONS}; do
 		[[ -e "${TMPDIR}"/"${partition}".img ]] && mv "${TMPDIR}"/"${partition}".img "${OUTDIR}"/"${partition}".img
 	done
+	log_info "Processing signed images..."
 	find "${TMPDIR}" -mindepth 2 -type f -name "*-sign.img" -exec mv {} . \;	# move .img in sub-dir to ${TMPDIR}
 	find "${TMPDIR}" -type f ! -name "*-sign.img" -exec rm -rf {} \;	# delete other files
 	find "${TMPDIR}" -maxdepth 1 -type f -name "*-sign.img" | while read -r i; do mv "${i}" "${i/-sign.img/.img}" 2>/dev/null; done	# proper .img names
@@ -716,70 +1048,96 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system-sign.img" 2>/dev/null || [
 			dd if="${TMPDIR}"/"${file}" of="${TMPDIR}"/x.img bs=$((0x4040)) skip=1 >/dev/null 2>&1
 		fi
 	done
+	log_success "Signed image processing completed"
 elif [[ $(${BIN_7ZZ} l -ba "$FILEPATH" | grep "super.img") ]]; then
-	echo "Super Image detected"
+	log_step "Super image detected in archive"
 	foundsupers=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{ print $NF }' | grep "super.img")
 	${BIN_7ZZ} e -y "${FILEPATH}" $foundsupers dummypartition 2>/dev/null >> ${TMPDIR}/zip.log
 	superchunk=$(ls | grep chunk | grep super | sort)
 	if [[ $(echo "$superchunk" | grep "sparsechunk") ]]; then
+		log_info "Converting sparse super chunks..."
 		"${SIMG2IMG}" $(echo "$superchunk" | tr '\n' ' ') super.img.raw 2>/dev/null
 		rm -rf *super*chunk*
 	fi
 	superimage_extract || exit 1
 elif [[ $(find "${TMPDIR}" -type f -name "super*.*img" | wc -l) -ge 1 ]]; then
-	echo "Super Image Detected"
+	log_step "Super image detected"
 	if [[ -f "${FILEPATH}" ]]; then
 		foundsupers=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep "super.*img")
 		${BIN_7ZZ} e -y -- "${FILEPATH}" "${foundsupers}" dummypartition 2>/dev/null >> "${TMPDIR}"/zip.log
 	fi
 	splitsupers=$(ls | grep -oP "super.[0-9].+.img")
 	if [[ ! -z "${splitsupers}" ]]; then
-		printf "Creating super.img.raw ...\n"
+		log_info "Creating super.img from split files..."
 		"${SIMG2IMG}" ${splitsupers} super.img.raw 2>/dev/null
 		rm -rf -- ${splitsupers}
 	fi
 	superchunk=$(find . -maxdepth 1 -type f -name "*super*chunk*" | cut -d'/' -f'2-' | sort)
 	if echo "${superchunk}" | grep -q "sparsechunk"; then
-		printf "Creating super.img.raw ...\n"
+		log_info "Creating super.img from sparse chunks..."
 		"${SIMG2IMG}" ${superchunk} super.img.raw 2>/dev/null
 		rm -rf -- *super*chunk*
 	fi
 	superimage_extract || exit 1
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep tar.md5 | gawk '{print $NF}' | grep -q AP_ 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "*AP_*tar.md5" | wc -l) -ge 1 ]]; then
-	printf "AP tarmd5 Detected\n"
+	log_step "Samsung AP tar.md5 firmware detected"
 	#mv -f "${FILEPATH}" "${TMPDIR}"/
 	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} e -y "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
-	printf "Extracting Images...\n"
-	for i in $(ls *.tar.md5); do
-		tar -xf "${i}" || exit 1
-		rm -fv "${i}" || exit 1
-		printf "Extracted %s\n" "${i}"
-	done
-	[[ $(ls *.lz4 2>/dev/null) ]] && {
-		printf "Extracting lz4 Archives...\n"
-		for f in $(ls *.lz4); do
-			lz4 -dc ${f} > "${f/.lz4/}" || exit 1
-			rm -fv ${f} || exit 1
-			printf "Extracted %s\n" "${f}"
+	
+	# Extract tar.md5 archives
+	tarmd5_files=(*.tar.md5)
+	tarmd5_count=${#tarmd5_files[@]}
+	if [[ -e "${tarmd5_files[0]}" ]]; then
+		log_info "Extracting ${tarmd5_count} tar.md5 archive(s)..."
+		for i in "${tarmd5_files[@]}"; do
+			tar -xf "${i}" || exit 1
+			rm -f "${i}" || exit 1
 		done
-	}
-	for samsung_ext4_img_files in $(find -maxdepth 1 -type f -name \*.ext4 -printf '%P\n'); do
-		mv -v $samsung_ext4_img_files "${samsung_ext4_img_files%%.ext4}"
-	done
+		log_success "Extracted ${tarmd5_count} tar.md5 archive(s)"
+	fi
+	
+	# Extract lz4 archives
+	lz4_files=(*.lz4)
+	if [[ -e "${lz4_files[0]}" ]]; then
+		lz4_count=${#lz4_files[@]}
+		log_info "Extracting ${lz4_count} lz4 archive(s)..."
+		for f in "${lz4_files[@]}"; do
+			lz4 -dc "${f}" > "${f/.lz4/}" || exit 1
+			rm -f "${f}" || exit 1
+		done
+		log_success "Extracted ${lz4_count} lz4 archive(s)"
+	fi
+	
+	# Rename Samsung ext4 files
+	ext4_files=()
+	while IFS= read -r -d '' file; do
+		ext4_files+=("$file")
+	done < <(find -maxdepth 1 -type f -name '*.ext4' -printf '%P\0')
+	
+	if [[ ${#ext4_files[@]} -gt 0 ]]; then
+		log_debug "Renaming ${#ext4_files[@]} ext4 file(s)..."
+		for samsung_ext4_img_files in "${ext4_files[@]}"; do
+			mv "${samsung_ext4_img_files}" "${samsung_ext4_img_files%%.ext4}"
+		done
+	fi
+	
 	if [[ -f super.img ]]; then
 		superimage_extract || exit 1	
 	fi
 	if [[ ! -f system.img ]]; then
-		printf "Extract failed\n"
+		log_error "Extraction failed - system.img not found"
 		rm -rf "${TMPDIR}" && exit 1
 	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q payload.bin 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "payload.bin" | wc -l) -ge 1 ]]; then
-	printf "AB OTA Payload Detected\n"
+	log_step "AB OTA payload.bin detected"
+	log_info "Extracting payload using $(nproc --all) CPU cores..."
 	${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" "${FILEPATH}" >/dev/null
+	log_success "Payload extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".*.rar\|.*.zip\|.*.7z\|.*.tar$" 2>/dev/null || [[ $(find "${TMPDIR}" -type f \( -name "*.rar" -o -name "*.zip" -o -name "*.7z" -o -name "*.tar" \) | wc -l) -ge 1 ]]; then
-	printf "Rar/Zip/7Zip/Tar Archived Firmware Detected\n"
+	log_step "Compressed archive firmware detected"
 	if [[ -f "${FILEPATH}" ]]; then
 		mkdir -p "${TMPDIR}"/"${UNZIP_DIR}" 2>/dev/null
+		log_info "Extracting archive..."
 		${BIN_7ZZ} e -y "${FILEPATH}" -o"${TMPDIR}"/"${UNZIP_DIR}"  >> "${TMPDIR}"/zip.log
 		for f in "${TMPDIR}"/"${UNZIP_DIR}"/*; do detox -r "${f}" 2>/dev/null; done
 	fi
@@ -789,28 +1147,32 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".*.rar\|.*.zip\|.*.7z\|.*.tar$" 2>/d
 	for file in ${zip_list}; do
 		mv "${TMPDIR}"/"${file}" "${INPUTDIR}"/
 		rm -rf "${TMPDIR:?}"/*
+		log_info "Re-loading nested archive..."
 		cd "${PROJECT_DIR}"/ || exit
 		( bash "${0}" "${INPUTDIR}"/"${file}" ) || exit 1
 		exit
 	done
 	rm -rf "${TMPDIR:?}"/"${UNZIP_DIR}"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "UPDATE.APP" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "UPDATE.APP") ]]; then
-	printf "Huawei UPDATE.APP Detected\n"
+	log_step "Huawei UPDATE.APP detected"
 	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x "${FILEPATH}" UPDATE.APP 2>/dev/null >> "${TMPDIR}"/zip.log
 	find "${TMPDIR}" -type f -name "UPDATE.APP" -exec mv {} . \;
+	log_info "Extracting partitions from UPDATE.APP..."
 	python3 "${SPLITUAPP}" -f "UPDATE.APP" -l super preas preavs || (
 	for partition in ${PARTITIONS}; do
-		python3 "${SPLITUAPP}" -f "UPDATE.APP" -l "${partition/.img/}" || printf "%s not found in UPDATE.APP\n" "${partition}"
+		python3 "${SPLITUAPP}" -f "UPDATE.APP" -l "${partition/.img/}" || log_debug "${partition} not found in UPDATE.APP"
 	done )
 	find output/ -type f -name "*.img" -exec mv {} . \;	# Partitions Are Extracted In "output" Folder
 	if [[ -f super.img ]]; then
-		printf "Creating super.img.raw ...\n"
+		log_info "Creating super.img from sparse files..."
 		"${SIMG2IMG}" super.img super_* super.img.raw 2>/dev/null
 		[[ ! -s super.img.raw && -f super.img ]] && mv super.img super.img.raw
 	fi
 	superimage_extract || exit 1
+	log_success "UPDATE.APP extraction completed"
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "rockchip" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "rockchip") ]]; then
-	printf "Rockchip Detected\n"
+	log_step "Rockchip firmware detected"
+	log_info "Extracting Rockchip firmware..."
 	${RK_EXTRACT} -unpack "${FILEPATH}" ${TMPDIR}
 	${AFPTOOL_EXTRACT} -unpack ${TMPDIR}/firmware.img ${TMPDIR}
 	[ -f ${TMPDIR}/Image/super.img ] && {
@@ -823,29 +1185,35 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "rockchip" 2>/dev/null || [[ $(fin
 		[[ -e "${TMPDIR}/Image/${partition}.img" ]] && mv "${TMPDIR}/Image/${partition}.img" "${OUTDIR}/${partition}.img"
 		[[ -e "${TMPDIR}/${partition}.img" ]] && mv "${TMPDIR}/${partition}.img" "${OUTDIR}/${partition}.img"
 	done
+	log_success "Rockchip extraction completed"
 fi
 
 # PAC Archive Check
 if [[ "${EXTENSION}" == "pac" ]]; then
-	printf "PAC Archive Detected.\n"
+	log_step "PAC archive detected"
+	log_info "Extracting PAC archive..."
 	python3 ${PACEXTRACTOR} ${FILEPATH} $(pwd)
 	superimage_extract || exit 1
+	log_success "PAC extraction completed"
 	exit
 fi
 
 # $(pwd) == "${TMPDIR}"
 
 # Process All otherpartitions From TMPDIR Now
+other_parts_processed=0
 for otherpartition in ${OTHERPARTITIONS}; do
 	filename=${otherpartition%:*} && outname=${otherpartition#*:}
 	output=$(ls -- "${filename}"* 2>/dev/null)
 	if [[ -f "${output}" ]]; then
-		printf "%s Detected For %s\n" "${output}" "${outname}"
+		((other_parts_processed++))
+		log_debug "Processing ${filename} as ${outname}"
 		[[ ! -e "${TMPDIR}"/"${outname}".img ]] && mv "${output}" "${TMPDIR}"/"${outname}".img
 		"${SIMG2IMG}" "${TMPDIR}"/"${outname}".img "${OUTDIR}"/"${outname}".img 2>/dev/null
 		[[ ! -s "${OUTDIR}"/"${outname}".img && -f "${TMPDIR}"/"${outname}".img ]] && mv "${outname}".img "${OUTDIR}"/"${outname}".img
 	fi
 done
+[[ ${other_parts_processed} -gt 0 ]] && log_info "Processed ${other_parts_processed} additional partition(s)"
 
 # Process All partitions From TMPDIR Now
 for partition in ${PARTITIONS}; do
@@ -877,110 +1245,45 @@ done
 cd "${OUTDIR}"/ || exit
 rm -rf "${TMPDIR:?}"/*
 
-# Extract boot.img
-if [[ -f "${OUTDIR}"/boot.img ]]; then
-	# Extract dts
-	mkdir -p "${OUTDIR}"/bootimg "${OUTDIR}"/bootdts 2>/dev/null
-	uvx -q extract-dtb "${OUTDIR}"/boot.img -o "${OUTDIR}"/bootimg >/dev/null
-	find "${OUTDIR}"/bootimg -name '*.dtb' -type f | gawk -F'/' '{print $NF}' | while read -r i; do "${DTC}" -q -s -f -I dtb -O dts -o bootdts/"${i/\.dtb/.dts}" bootimg/"${i}"; done 2>/dev/null
-	bash "${UNPACKBOOT}" "${OUTDIR}"/boot.img "${OUTDIR}"/boot 2>/dev/null
-	printf "Boot extracted\n"
-	# extract-ikconfig
-	mkdir -p "${OUTDIR}"/bootRE
-	bash "${EXTRACT_IKCONFIG}" "${OUTDIR}"/boot.img > "${OUTDIR}"/bootRE/ikconfig 2> /dev/null
-	[[ ! -s "${OUTDIR}"/bootRE/ikconfig ]] && rm -f "${OUTDIR}"/bootRE/ikconfig 2>/dev/null
-	# vmlinux-to-elf
-	if [[ ! -f "${OUTDIR}"/vendor_boot.img ]]; then
-		python3 "${KALLSYMS_FINDER}" "${OUTDIR}"/boot.img > "${OUTDIR}"/bootRE/boot_kallsyms.txt >/dev/null 2>&1
-		printf "boot_kallsyms.txt generated\n"
-	else
-		python3 "${KALLSYMS_FINDER}" "${OUTDIR}"/boot/kernel > "${OUTDIR}"/bootRE/kernel_kallsyms.txt >/dev/null 2>&1
-		printf "kernel_kallsyms.txt generated\n"
-	fi
-	python3 "${VMLINUX2ELF}" "${OUTDIR}"/boot.img "${OUTDIR}"/bootRE/boot.elf >/dev/null 2>&1
-	printf "boot.elf generated\n"
-	[[ -f "${OUTDIR}"/boot/dtb.img ]] && {
-		mkdir -p "${OUTDIR}"/dtbimg 2>/dev/null
-		uvx -q extract-dtb "${OUTDIR}"/boot/dtb.img -o "${OUTDIR}"/dtbimg >/dev/null
-	}
-fi
+# ============================================================================
+# PARTITION EXTRACTION PHASE
+# ============================================================================
 
-# Extract vendor_boot.img
-if [[ -f "${OUTDIR}"/vendor_boot.img ]]; then
-	# Extract dts
-	mkdir -p "${OUTDIR}"/vendor_bootimg "${OUTDIR}"/vendor_bootdts 2>/dev/null
-	uvx -q extract-dtb "${OUTDIR}"/vendor_boot.img -o "${OUTDIR}"/vendor_bootimg >/dev/null
-	find "${OUTDIR}"/vendor_bootimg -name '*.dtb' -type f | gawk -F'/' '{print $NF}' | while read -r i; do "${DTC}" -q -s -f -I dtb -O dts -o vendor_bootdts/"${i/\.dtb/.dts}" vendor_bootimg/"${i}"; done 2>/dev/null
-	bash "${UNPACKBOOT}" "${OUTDIR}"/vendor_boot.img "${OUTDIR}"/vendor_boot 2>/dev/null
-	printf "Vendor Boot extracted\n"
-	# extract-ikconfig
-	mkdir -p "${OUTDIR}"/vendor_bootRE
-	# vmlinux-to-elf
-	python3 "${VMLINUX2ELF}" "${OUTDIR}"/vendor_boot.img "${OUTDIR}"/vendor_bootRE/vendor_boot.elf >/dev/null 2>&1
-	printf "vendor_boot.elf generated\n"
-	[[ -f "${OUTDIR}"/vendor_boot/dtb.img ]] && {
-		mkdir -p "${OUTDIR}"/vendor_dtbimg 2>/dev/null
-		uvx -q extract-dtb "${OUTDIR}"/vendor_boot/dtb.img -o "${OUTDIR}"/vendor_dtbimg >/dev/null
-	}
-fi
+log_header "Partition Extraction Phase"
 
-# Extract recovery.img
-if [[ -f "${OUTDIR}"/recovery.img ]]; then
-	bash "${UNPACKBOOT}" "${OUTDIR}"/recovery.img "${OUTDIR}"/recovery 2>/dev/null
-	printf "Recovery extracted\n"
-fi
+# Extract boot images using new modular functions
+extract_boot_image "boot"
+extract_boot_image "vendor_boot"
+extract_boot_image "recovery"
+extract_boot_image "init_boot"
+extract_boot_image "vendor_kernel_boot"
 
-# Extract dtbo
-if [[ -f "${OUTDIR}"/dtbo.img ]]; then
-	mkdir -p "${OUTDIR}"/dtbo "${OUTDIR}"/dtbodts 2>/dev/null
-	uvx -q extract-dtb "${OUTDIR}"/dtbo.img -o "${OUTDIR}"/dtbo >/dev/null
-	find "${OUTDIR}"/dtbo -name '*.dtb' -type f | gawk -F'/' '{print $NF}' | while read -r i; do "${DTC}" -q -s -f -I dtb -O dts -o dtbodts/"${i/\.dtb/.dts}" dtbo/"${i}"; done 2>/dev/null
-	printf "dtbo extracted\n"
-fi
+# Extract DTBO
+extract_dtbo_image
 
-# Extract Partitions
+# Extract all regular partitions with improved logic
+log_step "Extracting regular partitions"
+partitions_extracted=0
+partitions_failed=0
+
 for p in $PARTITIONS; do
-	if ! echo "${p}" | grep -q "boot\|recovery\|dtbo\|vendor_boot\|tz"; then
-		if [[ -e "$p.img" ]]; then
-			mkdir "$p" 2> /dev/null || rm -rf "${p:?}"/*
-			echo "Extracting $p partition..."
-			${BIN_7ZZ} x -snld "$p".img -y -o"$p"/ > /dev/null 2>&1
-			if [ $? -eq 0 ]; then
-				rm "$p".img > /dev/null 2>&1
-			else
-				# Handling EROFS Images, which can't be handled by 7z.
-				echo "Extraction Failed my 7z"
-				if [ -f $p.img ] && [ $p != "modem" ]; then
-					echo "Couldn't extract $p partition by 7z. Using fsck.erofs."
-					rm -rf "${p}"/*
-					"${FSCK_EROFS}" --extract="$p" "$p".img
-					if [ $? -eq 0 ]; then
-						rm -fv "$p".img > /dev/null 2>&1
-					else
-						echo "Couldn't extract $p partition by fsck.erofs. Using mount loop"
-						sudo mount -o loop -t auto "$p".img "$p"
-						mkdir "${p}_"
-						sudo cp -rf "${p}/"* "${p}_"
-						sudo umount "${p}"
-						sudo cp -rf "${p}_/"* "${p}"
-						sudo rm -rf "${p}_"
-						sudo chown -R "$(whoami)" "${p}"/*
-						chmod -R u+rwX "${p}"/*
-						if [ $? -eq 0 ]; then
-							rm -fv "$p".img > /dev/null 2>&1
-						else
-							echo "Couldn't extract $p partition. It might use an unsupported filesystem."
-							echo "For EROFS: make sure you're using Linux 5.4+ kernel."
-							echo "For F2FS: make sure you're using Linux 5.15+ kernel."
-						fi
-					fi
-				fi
-			fi
-		fi
+	if extract_partition_image "${p}"; then
+		((partitions_extracted++))
+	else
+		((partitions_failed++))
 	fi
 done
 
+if [[ ${partitions_extracted} -gt 0 ]]; then
+	log_success "Successfully extracted ${partitions_extracted} partition(s)"
+fi
+
+if [[ ${partitions_failed} -gt 0 ]]; then
+	log_warn "${partitions_failed} partition(s) failed to extract"
+fi
+
 # Remove Unnecessary Image Leftover From OUTDIR
+log_debug "Cleaning up unnecessary image files..."
 for q in *.img; do
 	if ! echo "${q}" | grep -q "boot\|recovery\|dtbo\|tz\|optics\|omr\|prism\|persist"; then
 		rm -f "${q}" 2>/dev/null
@@ -988,15 +1291,17 @@ for q in *.img; do
 done
 
 # Oppo/Realme Devices Have Some Images In A Euclid Folder In Their Vendor and/or System, Extract Those For Props
+log_debug "Checking for Euclid images..."
 for dir in "vendor/euclid" "system/system/euclid"; do
 	if [[ -d "${dir}" ]]; then
-		pushd "${dir}" || exit 1
+		pushd "${dir}" >/dev/null || continue
 		for f in *.img; do
 			[[ -f "${f}" ]] || continue
-			${BIN_7ZZ} x "${f}" -o"${f/.img/}"
+			log_debug "Extracting Euclid image: ${f}"
+			${BIN_7ZZ} x "${f}" -o"${f/.img/}" >/dev/null 2>&1
 			rm -f "${f}"
 		done
-		popd || exit 1
+		popd >/dev/null || exit 1
 	fi
 done
 
@@ -1245,6 +1550,29 @@ git_push_with_retry() {
 		# Configure git for large repo
 		git_configure_large_repo "." || return 1
 		
+		# Ensure branch exists and has commits before pushing
+		if ! git rev-parse --verify "${branch}" >/dev/null 2>&1; then
+			log_warn "Branch '${branch}' does not exist, will be created with first commit"
+		fi
+		
+		# Check if there are any commits on the current branch
+		if ! git log -1 >/dev/null 2>&1; then
+			log_warn "No commits found on branch ${branch}"
+			log_info "Creating initial commit if staging area has files..."
+			
+			# Check if there are staged changes
+			if ! git diff --cached --quiet 2>/dev/null; then
+				log_info "Staging area has files, committing them"
+				git commit -sm "Initial commit for ${description:-firmware dump}" || {
+					log_error "Failed to create initial commit"
+					return 1
+				}
+			else
+				log_warn "No staged files to commit - push will be skipped"
+				return 0  # Return success as there's nothing to push
+			fi
+		fi
+		
 		# Use improved push with retry
 		local max_attempts=10
 		local attempt=1
@@ -1264,7 +1592,12 @@ git_push_with_retry() {
 				log_warn "Push failed with exit code $exit_code"
 				
 				# Analyze the error
-				if grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
+				if grep -q "src refspec.*does not match any" /tmp/git_push_output_$$.log; then
+					log_error "Branch ${branch} does not exist or has no commits"
+					log_error "This should not happen as we checked earlier"
+					rm -f /tmp/git_push_output_$$.log
+					return 1
+				elif grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
 					log_warn "Server error detected (HTTP 500/502/503)"
 					# Increase buffer size
 					git config http.postBuffer 1048576000  # 1GB
@@ -1280,6 +1613,8 @@ git_push_with_retry() {
 					find . -type f -size +50M -not -path ".git/*" | while read -r largefile; do
 						git lfs track "$largefile" 2>/dev/null
 					done
+				elif grep -q "failed to push some refs" /tmp/git_push_output_$$.log; then
+					log_warn "Push rejected - checking for diverged history"
 				fi
 				
 				if [ $attempt -lt $max_attempts ]; then
@@ -1306,6 +1641,17 @@ git_push_with_retry() {
 		local max_attempts=5
 		local attempt=1
 		local wait_time=10
+		
+		# Ensure there are commits before pushing
+		if ! git log -1 >/dev/null 2>&1; then
+			echo "No commits found - creating initial commit if needed"
+			if ! git diff --cached --quiet 2>/dev/null; then
+				git commit -sm "Initial commit for ${description:-firmware dump}" || return 1
+			else
+				echo "No staged files to commit"
+				return 0
+			fi
+		fi
 		
 		while [ $attempt -le $max_attempts ]; do
 			echo "Attempting to push (attempt $attempt/$max_attempts)..."
@@ -1676,7 +2022,32 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	git config http.retries 10
 	git config core.bigFileThreshold 50m
 	
-	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
+	# Validate branch name before checkout
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is empty! Using incremental as fallback"
+		branch="${incremental}"
+	fi
+	
+	if [[ -z "${branch}" ]]; then
+		log_fatal "Cannot determine branch name - both description and incremental are empty"
+		exit 1
+	fi
+	
+	log_info "Creating git branch: ${branch}"
+	git checkout -b "${branch}" || { 
+		log_warn "Failed to create branch '${branch}', trying incremental '${incremental}'"
+		git checkout -b "${incremental}" && export branch="${incremental}"
+	}
+	
+	# Verify we're on the correct branch
+	current_branch=$(git rev-parse --abbrev-ref HEAD)
+	if [[ "${current_branch}" != "${branch}" ]]; then
+		log_warn "Current branch '${current_branch}' differs from expected '${branch}'"
+		branch="${current_branch}"
+	fi
+	
+	log_success "Git branch created: ${branch}"
+	
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
 	
@@ -1692,6 +2063,7 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	log_header "Pushing Firmware to GitHub"
 	log_info "Repository: https://github.com/${GIT_ORG}/${repo}.git"
 	log_info "Branch: ${branch}"
+	log_info "Description: ${description}"
 	sleep 1
 	git remote add origin https://${GITHUB_TOKEN}@github.com/${GIT_ORG}/${repo}.git
 	commit_and_push
@@ -1754,7 +2126,33 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	git config pack.windowMemory 256m			# Reduce memory usage during pack
 	git config pack.packSizeLimit 256m		# Limit pack file size
 	git config core.compression 0				# Disable compression for speed
-	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
+	
+	# Validate branch name before checkout
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is empty! Using incremental as fallback"
+		branch="${incremental}"
+	fi
+	
+	if [[ -z "${branch}" ]]; then
+		log_fatal "Cannot determine branch name - both description and incremental are empty"
+		exit 1
+	fi
+	
+	log_info "Creating git branch: ${branch}"
+	git checkout -b "${branch}" || { 
+		log_warn "Failed to create branch '${branch}', trying incremental '${incremental}'"
+		git checkout -b "${incremental}" && export branch="${incremental}"
+	}
+	
+	# Verify we're on the correct branch
+	current_branch=$(git rev-parse --abbrev-ref HEAD)
+	if [[ "${current_branch}" != "${branch}" ]]; then
+		log_warn "Current branch '${current_branch}' differs from expected '${branch}'"
+		branch="${current_branch}"
+	fi
+	
+	log_success "Git branch created: ${branch}"
+	
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
 	[[ -z "$(git config --get user.email)" ]] && git config user.email "guptasushrut@gmail.com"

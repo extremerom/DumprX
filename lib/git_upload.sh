@@ -227,12 +227,40 @@ function git_commit_chunks() {
 function git_push_with_retry() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3:-main}"
+	local branch="$3"  # No default - branch must be specified
 	local max_retries="${4:-10}"
+	
+	# Validate branch parameter
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_push_with_retry"
+		log_error "Usage: git_push_with_retry <repo_dir> <remote> <branch> [max_retries]"
+		return 1
+	fi
 	
 	log_step "Pushing to ${remote}/${branch}"
 	
 	cd "${repo_dir}" || return 1
+	
+	# Check if branch exists and has commits
+	if ! git rev-parse --verify "${branch}" >/dev/null 2>&1; then
+		log_error "Branch '${branch}' does not exist"
+		return 1
+	fi
+	
+	# Check if there are any commits on the branch
+	if ! git rev-parse "${branch}" >/dev/null 2>&1; then
+		log_error "Branch '${branch}' has no commits"
+		return 1
+	fi
+	
+	# Check if remote tracking branch exists
+	local has_upstream=false
+	if git rev-parse --verify "${remote}/${branch}" >/dev/null 2>&1; then
+		has_upstream=true
+		log_debug "Remote tracking branch ${remote}/${branch} exists"
+	else
+		log_debug "No remote tracking branch - will create on first push"
+	fi
 	
 	local attempt=1
 	local delay=5
@@ -241,8 +269,15 @@ function git_push_with_retry() {
 	while [[ ${attempt} -le ${max_retries} ]]; do
 		log_info "Push attempt ${attempt}/${max_retries}"
 		
+		# Build push command - use -u flag only on first push
+		local push_cmd="git push --progress"
+		if [[ "${has_upstream}" == "false" ]]; then
+			push_cmd="${push_cmd} -u"
+		fi
+		push_cmd="${push_cmd} ${remote} ${branch}"
+		
 		# Try to push with progress
-		if git push --progress "${remote}" "${branch}" 2>&1 | tee /tmp/git_push_$$.log; then
+		if eval "${push_cmd}" 2>&1 | tee /tmp/git_push_$$.log; then
 			log_success "Push successful on attempt ${attempt}"
 			rm -f /tmp/git_push_$$.log
 			return 0
@@ -250,8 +285,13 @@ function git_push_with_retry() {
 		
 		local exit_code=$?
 		
-		# Check the error
-		if grep -q "HTTP 500" /tmp/git_push_$$.log || grep -q "HTTP 502" /tmp/git_push_$$.log || grep -q "HTTP 503" /tmp/git_push_$$.log; then
+		# Check for specific errors
+		if grep -q "src refspec.*does not match any" /tmp/git_push_$$.log; then
+			log_error "Branch ${branch} has no commits or does not exist"
+			log_info "Make sure you have committed changes before pushing"
+			rm -f /tmp/git_push_$$.log
+			return 1
+		elif grep -q "HTTP 500" /tmp/git_push_$$.log || grep -q "HTTP 502" /tmp/git_push_$$.log || grep -q "HTTP 503" /tmp/git_push_$$.log; then
 			log_warn "Server error detected, will retry"
 		elif grep -q "larger than.*http.postBuffer" /tmp/git_push_$$.log; then
 			log_warn "Buffer size issue, increasing buffer"
@@ -260,10 +300,25 @@ function git_push_with_retry() {
 			log_warn "RPC failed, trying alternative method"
 			# Try pushing with shallow clone
 			git config http.version HTTP/1.1
+		elif grep -q "failed to push some refs" /tmp/git_push_$$.log; then
+			log_warn "Push rejected - checking for diverged history"
+			# Try force with lease for safety
+			if [[ "${has_upstream}" == "true" ]]; then
+				log_warn "Attempting push with --force-with-lease"
+				if git push --force-with-lease --progress "${remote}" "${branch}" 2>&1; then
+					log_success "Force push successful"
+					rm -f /tmp/git_push_$$.log
+					return 0
+				fi
+			fi
 		fi
 		
 		if [[ ${attempt} -ge ${max_retries} ]]; then
 			log_error "Push failed after ${max_retries} attempts"
+			log_info "Last error output:"
+			tail -20 /tmp/git_push_$$.log | while read -r line; do
+				log_error "  ${line}"
+			done
 			rm -f /tmp/git_push_$$.log
 			return 1
 		fi
@@ -288,7 +343,13 @@ function git_push_with_retry() {
 function git_push_shallow() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3:-main}"
+	local branch="$3"  # No default - branch must be specified
+	
+	# Validate branch parameter
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_push_shallow"
+		return 1
+	fi
 	
 	log_step "Attempting shallow push"
 	
@@ -311,8 +372,14 @@ function git_push_shallow() {
 function git_push_batches() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3:-main}"
+	local branch="$3"  # No default - branch must be specified
 	local commits_per_batch="${4:-10}"
+	
+	# Validate branch parameter
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_push_batches"
+		return 1
+	fi
 	
 	log_step "Pushing commits in batches"
 	
@@ -365,10 +432,18 @@ function git_push_batches() {
 function git_upload_dump() {
 	local repo_dir="$1"
 	local remote_url="$2"
-	local branch="${3:-main}"
+	local branch="$3"  # No default - branch must be specified
 	local use_lfs="${4:-true}"
 	
+	# Validate required parameters
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_upload_dump"
+		log_error "Usage: git_upload_dump <repo_dir> <remote_url> <branch> [use_lfs]"
+		return 1
+	fi
+	
 	log_header "Uploading Firmware Dump to GitHub"
+	log_info "Target branch: ${branch}"
 	
 	cd "${repo_dir}" || {
 		log_fatal "Cannot access repository directory: ${repo_dir}"

@@ -1,39 +1,87 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
 # Originally by @xiaolu
+# Modernized with logging system integration
 
-C_OUT="\033[0;1m"
-C_ERR="\033[31;1m"
-C_CLEAR="\033[0;0m"
+# Source logger if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [[ -f "${PROJECT_ROOT}/lib/logger.sh" ]]; then
+	source "${PROJECT_ROOT}/lib/logger.sh"
+	USE_LOGGER=true
+else
+	USE_LOGGER=false
+	# Fallback color codes
+	C_OUT="\033[0;1m"
+	C_ERR="\033[31;1m"
+	C_CLEAR="\033[0;0m"
+fi
+
 pout() {
-    printf "${C_OUT}${*}${C_CLEAR}\n"
+	if [[ "${USE_LOGGER}" == "true" ]]; then
+		log_info "$*"
+	else
+		printf "${C_OUT}${*}${C_CLEAR}\n"
+	fi
 }
+
 perr() {
-    printf "${C_ERR}${*}${C_CLEAR}\n"
+	if [[ "${USE_LOGGER}" == "true" ]]; then
+		log_error "$*"
+	else
+		printf "${C_ERR}${*}${C_CLEAR}\n"
+	fi
 }
+
+psuccess() {
+	if [[ "${USE_LOGGER}" == "true" ]]; then
+		log_success "$*"
+	else
+		printf "\033[0;32m${*}${C_CLEAR}\n"
+	fi
+}
+
+pdebug() {
+	if [[ "${USE_LOGGER}" == "true" ]]; then
+		log_debug "$*"
+	else
+		printf "\033[0;36m${*}${C_CLEAR}\n"
+	fi
+}
+
 unpack_complete()
 {
-    [ ! -z $format ] && echo format=$format >> ../img_info
-    pout "Unpack completed."
-    exit
+	[ ! -z $format ] && echo format=$format >> ../img_info
+	psuccess "Unpack completed."
+	exit
 }
+
 usage()
 {
-    pout "\n >>  Unpack boot.img tool, Originally by @xiaolu  <<"
+	pout "\n >>  Unpack boot.img tool, Originally by @xiaolu  <<"
 	pout "     - w/ MTK Header Detection, by @carlitros900"
-    pout "-----------------------------------------------------"
-    perr " Not enough parameters or parameter error!"
-    pout " unpack boot.img & decompress ramdisk:"
+	pout "-----------------------------------------------------"
+	perr " Not enough parameters or parameter error!"
+	pout " unpack boot.img & decompress ramdisk:"
 	pout "    $(basename $0) [img] [output dir]"
-    pout "    $(basename $0) boot.img boot20130905\n"
-    exit
+	pout "    $(basename $0) boot.img boot20130905\n"
+	exit
 }
+
 #decide action
 [ $# -lt 2 ] || [ $# -gt 3 ] && usage
 
 tempdir="$(readlink -f $2)"
 mkdir -p $tempdir
-pout "Unpack & decompress $1 to $2"
+
+if [[ "${USE_LOGGER}" == "true" ]]; then
+	log_step "Unpacking boot image"
+	log_info "Source: $1"
+	log_info "Output: $2"
+else
+	pout "Unpack & decompress $1 to $2"
+fi
 
 # Get boot.img info
 cp -f $1 $tempdir/
@@ -181,36 +229,36 @@ ramdisk=ramdisk
 [ "$VNDRBOOT" == "false" ] && [ ! -s $kernel ] && exit
 
 # Print boot.img/recovery.img info
-[ ! -z "$board" ] && pout "  board               : $board"
+[ ! -z "$board" ] && pdebug "  board               : $board"
 [ $version -lt 3 ] || [ "$VNDRBOOT" == "false" ] && \
-	pout "  kernel              : $kernel"
-pout "  ramdisk             : $ramdisk"
-pout "  page size           : $page_size"
+	pdebug "  kernel              : $kernel"
+pdebug "  ramdisk             : $ramdisk"
+pdebug "  page size           : $page_size"
 [ $version -lt 3 ] || [ "$VNDRBOOT" == "false" ] && \
-	pout "  kernel size         : $kernel_size" && \
-	pout "  ramdisk size        : $ramdisk_size"
+	pdebug "  kernel size         : $kernel_size" && \
+	pdebug "  ramdisk size        : $ramdisk_size"
 [ ! -z $second_size ] && [ $second_size -gt 0 ] && \
-	pout "  second_size         : $second_size"
-pout "  base                : $base_addr"
+	pdebug "  second_size         : $second_size"
+pdebug "  base                : $base_addr"
 [ $version -lt 3 ] || [ "$VNDRBOOT" == "true" ] && \
-	pout "  kernel offset       : $kernel_offset" && \
-	pout "  ramdisk offset      : $ramdisk_offset"
-[ $version -gt 0 ] && [ $dtbo_size -gt 0 ] && pout "  boot header version : $version" && \
-	pout "  dtbo                : $dtbo" && \
-	pout "  dtbo size           : $dtbo_size" && \
-	pout "  dtbo offset         : $dtbo_offset"
-[ $dtb_size -gt 0 ] && pout "  dtb img             : $dt" && \
-	pout "  dtb size            : $dtb_size"
+	pdebug "  kernel offset       : $kernel_offset" && \
+	pdebug "  ramdisk offset      : $ramdisk_offset"
+[ $version -gt 0 ] && [ $dtbo_size -gt 0 ] && pdebug "  boot header version : $version" && \
+	pdebug "  dtbo                : $dtbo" && \
+	pdebug "  dtbo size           : $dtbo_size" && \
+	pdebug "  dtbo offset         : $dtbo_offset"
+[ $dtb_size -gt 0 ] && pdebug "  dtb img             : $dt" && \
+	pdebug "  dtb size            : $dtb_size"
 [ $version -gt 1 ] && [ "$VNDRBOOT" == "true" ] && \
-	pout "  dtb offset          : $dtb_offset"
+	pdebug "  dtb offset          : $dtb_offset"
 [ ! -z $second_size ] && [ $second_size -gt 0 ] && \
-	pout "  second_offset       : $second_offset"
+	pdebug "  second_offset       : $second_offset"
 [ ! -z $os_version ] || [ ! -z $patch_level ] && \
-	pout "  os_version          : $os_version" && \
-	pout "  os_patch_level      : $patch_level" && \
+	pdebug "  os_version          : $os_version" && \
+	pdebug "  os_patch_level      : $patch_level" && \
 	os_data="os_version=$os_version\nos_patch_level=$patch_level\n"
-pout "  tags offset         : $tags_offset"
-pout "  cmd line            : $cmd_line"
+pdebug "  tags offset         : $tags_offset"
+pdebug "  cmd line            : $cmd_line"
 
 esq="'\"'\"'"
 escaped_cmd_line=$(echo $cmd_line | sed "s/'/$esq/g")
@@ -231,43 +279,43 @@ if [ $ramdisk_packed_header = $mtk_header_magic ]; then
     partition_name=$(od -A n -S1 -j 8 -N 32 ramdisk.packed.mtk)
     escaped_partition_name=$(echo $partition_name | sed "s/'/$esq/g")
     printf "ramdisk has a MTK header:\n\tpartition_size=${partition_size}\n\tpartition_name=$escaped_partition_name\n" >> img_info
-    pout "  ramdisk has a MTK header"
-    pout "    header_size : 512"
-    pout "    partition_size : $partition_size"
-    pout "    partition_name : $escaped_partition_name"
+    pdebug "  ramdisk has a MTK header"
+    pdebug "    header_size : 512"
+    pdebug "    partition_size : $partition_size"
+    pdebug "    partition_name : $escaped_partition_name"
     rm -f ramdisk.packed.mtk
 fi
 
 mkdir ramdisk && cd ramdisk
 
 if gzip -t ../ramdisk.packed 2>/dev/null; then
-    pout "ramdisk is gzip format."
+    psuccess "ramdisk is gzip format."
     format=gzip
     gzip -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
     unpack_complete
 fi
 if lzma -t ../ramdisk.packed 2>/dev/null; then
-    pout "ramdisk is lzma format."
+    psuccess "ramdisk is lzma format."
     format=lzma
     lzma -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
     unpack_complete
 fi
 if xz -t ../ramdisk.packed 2>/dev/null; then
-    pout "ramdisk is xz format."
+    psuccess "ramdisk is xz format."
     format=xz
     xz -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
     unpack_complete
 fi
 if lzop -t ../ramdisk.packed 2>/dev/null; then
-    pout "ramdisk is lzo format."
+    psuccess "ramdisk is lzo format."
     format=lzop
     lzop -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
     unpack_complete
 fi
 if lz4 -d ../ramdisk.packed 2>/dev/null | cpio -i -d -m --no-absolute-filenames 2>/dev/null; then
-    pout "ramdisk is lz4 format."
+    psuccess "ramdisk is lz4 format."
     format=lz4
 else
-    pout "ramdisk is unknown format,can't unpack ramdisk"
+    perr "ramdisk is unknown format, can't unpack ramdisk"
 fi
 unpack_complete
