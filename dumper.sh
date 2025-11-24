@@ -296,7 +296,6 @@ else
 					detox -r "${FILEPATH}" 2>/dev/null
 					# Try inline-detox if available, otherwise keep the detoxed path
 					if util_command_exists inline-detox; then
-						local detoxed_path
 						detoxed_path=$(echo "${FILEPATH}" | inline-detox 2>/dev/null)
 						if [[ -n "${detoxed_path}" ]] && [[ -e "${detoxed_path}" ]]; then
 							FILEPATH="${detoxed_path}"
