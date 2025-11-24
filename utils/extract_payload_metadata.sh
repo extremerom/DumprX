@@ -7,6 +7,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source common utilities
+if [[ -f "${SCRIPT_DIR}/payload_common.sh" ]]; then
+    source "${SCRIPT_DIR}/payload_common.sh"
+fi
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -26,18 +31,6 @@ function usage() {
     echo "Example:"
     echo "  $0 payload.bin metadata.pb"
     exit 1
-}
-
-function read_uint64() {
-    local file=$1
-    local offset=$2
-    dd if="$file" bs=1 skip=$offset count=8 2>/dev/null | od -An -t u8 | tr -d ' '
-}
-
-function read_uint32() {
-    local file=$1
-    local offset=$2
-    dd if="$file" bs=1 skip=$offset count=4 2>/dev/null | od -An -t u4 | tr -d ' '
 }
 
 function extract_manifest() {

@@ -3,6 +3,17 @@
 # Advanced payload processing functions
 # Includes checksum validation, progress tracking, and recovery
 
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/payload_common.sh" ]]; then
+    source "${SCRIPT_DIR}/payload_common.sh"
+fi
+
+# Source basic payload functions for reuse
+if [[ -f "${SCRIPT_DIR}/payload_functions.sh" ]]; then
+    source "${SCRIPT_DIR}/payload_functions.sh"
+fi
+
 # Function to verify extracted partition checksums
 verify_partition_checksum() {
     local partition_file=$1
@@ -42,8 +53,8 @@ estimate_extraction_time() {
         return 1
     fi
     
-    # Get file size in MB
-    local size_bytes=$(stat -f%z "$payload_file" 2>/dev/null || stat -c%s "$payload_file")
+    # Get file size using common function
+    local size_bytes=$(get_file_size "$payload_file")
     local size_mb=$((size_bytes / 1024 / 1024))
     
     # Rough estimate: ~50MB/s per worker on average hardware
@@ -68,8 +79,8 @@ check_disk_space() {
     local payload_file=$2
     local required_multiplier=${3:-2.5}
     
-    # Get payload size
-    local payload_size=$(stat -f%z "$payload_file" 2>/dev/null || stat -c%s "$payload_file")
+    # Get payload size using common function
+    local payload_size=$(get_file_size "$payload_file")
     local required_space=$((payload_size * required_multiplier / 1))
     
     # Get available space in output directory
@@ -203,18 +214,13 @@ create_extraction_report() {
         echo "Payload Size: $(du -h "$payload_file" | cut -f1)"
         echo ""
         
-        # Get payload version info
-        if [[ -f "${payload_file}" ]]; then
-            local magic=$(dd if="$payload_file" bs=1 count=4 2>/dev/null)
-            if [[ "$magic" == "CrAU" ]]; then
-                local version=$(dd if="$payload_file" bs=1 skip=4 count=8 2>/dev/null | od -An -t u8 | tr -d ' ')
+        # Get payload version info using existing functions
+        if command -v get_payload_version >/dev/null 2>&1; then
+            local version=$(get_payload_version "$payload_file")
+            if [[ "$version" != "0" && -n "$version" ]]; then
                 echo "Payload Version: v$version"
-                
-                case $version in
-                    2) echo "Android Version: Oreo/Pie (8/9)" ;;
-                    3) echo "Android Version: Q/R (10/11)" ;;
-                    4) echo "Android Version: S+ (12/13+)" ;;
-                esac
+                local version_info=$(get_payload_version_info "$version")
+                echo "Info: $version_info"
             fi
         fi
         
