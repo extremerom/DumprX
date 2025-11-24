@@ -16,11 +16,19 @@ You might've used firmware extractor via dumpyara from https://github.com/Androi
 - [x] dumpyara's and firmware_extractor's scripts are merged with handpicked shellcheck-ed and pylint-ed improvements
 - [x] The script can download and dump firmware from different filehosters such as Mega.NZ, Mediafire.com, AndroidFileHost.com and from Google Drive URLs
 - [x] File as-well-as Folder as an input is processed thoroughly to check all kinds of supported firmware types
-- [x] All the external tools are now inherited into one place and unnesessary files removed
+- [x] All the external tools are now inherited into one place and unnecessary files removed
 - [x] Binary tools are updated to latest available source
 - [x] LG KDZ utilities are updated to support latest firmwares
 - [x] Installation requirements are narrowed down to minimal for playing with this toolkit
 - [x] Recovery Dump is made too
+- [x] **NEW**: Comprehensive logging system with multiple levels (DEBUG, INFO, WARN, ERROR, FATAL)
+- [x] **NEW**: Colored console output with progress tracking and spinners
+- [x] **NEW**: Configuration file support (.dumprx.conf)
+- [x] **NEW**: Command-line options (--verbose, --quiet, --dry-run, --help)
+- [x] **NEW**: File logging support for troubleshooting
+- [x] **NEW**: Modular library architecture for better code organization
+- [x] **NEW**: Enhanced error handling and retry logic
+- [x] **NEW**: Checksum verification for downloads
 
 ## Recommendations before Playing with Firmware Dumper
 
@@ -41,6 +49,42 @@ Run this toolkit with proper firmware file/folder path or URL
 ```bash
 ./dumper.sh 'Firmware File/Extracted Folder -OR- Supported Website Link'
 ```
+
+### New Command-Line Options
+
+```bash
+# Basic usage
+./dumper.sh firmware.zip
+
+# Verbose mode (show debug messages)
+./dumper.sh --verbose firmware.zip
+./dumper.sh -v firmware.zip
+
+# Quiet mode (only show errors)
+./dumper.sh --quiet firmware.zip
+./dumper.sh -q firmware.zip
+
+# Dry run (don't actually perform operations)
+./dumper.sh --dry-run firmware.zip
+
+# Disable colored output
+./dumper.sh --no-colors firmware.zip
+
+# Use custom configuration file
+./dumper.sh --config mycustom.conf firmware.zip
+
+# Show help
+./dumper.sh --help
+```
+
+### Advanced Usage
+
+See [LOGGING.md](LOGGING.md) for detailed documentation on:
+- Logging system features
+- Configuration file options
+- Environment variables
+- Progress tracking
+- Summary reports
 
 Help Context:
 
