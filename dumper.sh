@@ -1252,6 +1252,36 @@ commit_and_push(){
 	# Split into 6 parts to handle large number of files
 	split_and_push_directory "system" "system" '^system_(ext|dlkm)$' 6
 
+	# Commit individual firmware partitions separately
+	local FIRMWARE_PARTITIONS=(
+		"boot"
+		"recovery" 
+		"modem"
+		"dtbo"
+		"dtb"
+		"vendor_boot"
+		"init_boot"
+		"vendor_kernel_boot"
+		"tz"
+	)
+	
+	for partition in "${FIRMWARE_PARTITIONS[@]}"; do
+		# Check for partition as directory
+		if [ -d "${partition}" ]; then
+			git add "${partition}"
+			git commit -sm "Add ${partition} for ${description}"
+			git push -u origin "${branch}"
+		fi
+		# Check for partition as file with common extensions
+		for ext in img bin mbn; do
+			if [ -f "${partition}.${ext}" ]; then
+				git add "${partition}.${ext}"
+				git commit -sm "Add ${partition} for ${description}"
+				git push -u origin "${branch}"
+			fi
+		done
+	done
+
 	git add .
 	git commit -sm "Add extras for ${description}"
 	git push -u origin "${branch}"
