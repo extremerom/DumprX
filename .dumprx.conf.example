@@ -1,0 +1,68 @@
+# DumprX Configuration File Example
+# Copy this file to .dumprx.conf and modify as needed
+
+# ============================================================================
+# LOGGING SETTINGS
+# ============================================================================
+
+# Log level: DEBUG, INFO, SUCCESS, WARN, ERROR, FATAL
+# Default: INFO
+log_level = INFO
+
+# Log file path (leave empty to disable file logging)
+# Default: (empty)
+log_file = 
+
+# Enable colored output
+# Default: true
+log_colors = true
+
+# Enable timestamps in log messages
+# Default: true
+log_timestamp = true
+
+# Quiet mode (only show errors)
+# Default: false
+quiet_mode = false
+
+# Verbose mode (show debug messages)
+# Default: false
+verbose_mode = false
+
+# ============================================================================
+# OPERATION SETTINGS
+# ============================================================================
+
+# Dry run mode (don't actually perform operations)
+# Default: false
+dry_run = false
+
+# Verify checksums for downloads
+# Default: false
+verify_checksums = false
+
+# Keep temporary files after extraction
+# Default: false
+keep_temp = false
+
+# Maximum number of retries for failed operations
+# Default: 3
+max_retries = 3
+
+# Download timeout in seconds
+# Default: 3600 (1 hour)
+download_timeout = 3600
+
+# Enable summary report at the end
+# Default: true
+enable_summary = true
+
+# ============================================================================
+# CUSTOM SETTINGS
+# ============================================================================
+# You can add custom settings here. They will be available as:
+# DUMPRX_CUSTOM_<key_name>
+
+# Examples:
+# custom_output_dir = /path/to/output
+# custom_temp_dir = /path/to/temp

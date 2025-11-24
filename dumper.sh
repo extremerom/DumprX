@@ -1,82 +1,162 @@
 #!/bin/bash
 
+# DumprX - Android Firmware Dumper (Refactored)
+# Based on Phoenix Firmware Dumper with improvements and new logging system
+
+# Set Base Project Directory (must be done before sourcing libraries)
+PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
+
+# Source libraries
+source "${PROJECT_DIR}/lib/logger.sh"
+source "${PROJECT_DIR}/lib/utils.sh"
+source "${PROJECT_DIR}/lib/config.sh"
+source "${PROJECT_DIR}/lib/downloaders.sh"
+
 # Clear Screen
 tput reset 2>/dev/null || clear
 
-# Unset Every Variables That We Are Gonna Use Later
-unset PROJECT_DIR INPUTDIR UTILSDIR OUTDIR TMPDIR FILEPATH FILE EXTENSION UNZIP_DIR ArcPath \
+# Initialize logging with default log file
+export DUMPRX_LOG_FILE="${PROJECT_DIR}/dumprx.log"
+export DUMPRX_LOG_TIMESTAMP=true
+export DUMPRX_LOG_COLORS=true
+
+# Load configuration if available
+config_load 2>/dev/null
+
+# Re-initialize logging after config load
+log_init
+
+# Unset variables that will be set during execution
+unset INPUTDIR UTILSDIR OUTDIR TMPDIR FILEPATH FILE EXTENSION UNZIP_DIR ArcPath \
 	GITHUB_TOKEN GIT_ORG TG_TOKEN CHAT_ID
 
-# Resize Terminal Window To Atleast 30x90 For Better View
+# Resize Terminal Window To At least 30x90 For Better View
 printf "\033[8;30;90t" || true
 
 # Banner
 function __bannerTop() {
-	local GREEN='\033[0;32m'
-	local NC='\033[0m'
 	echo -e \
-	${GREEN}"
+	"${LOG_COLOR_GREEN}
 	██████╗░██╗░░░██╗███╗░░░███╗██████╗░██████╗░██╗░░██╗
 	██╔══██╗██║░░░██║████╗░████║██╔══██╗██╔══██╗╚██╗██╔╝
 	██║░░██║██║░░░██║██╔████╔██║██████╔╝██████╔╝░╚███╔╝░
 	██║░░██║██║░░░██║██║╚██╔╝██║██╔═══╝░██╔══██╗░██╔██╗░
 	██████╔╝╚██████╔╝██║░╚═╝░██║██║░░░░░██║░░██║██╔╝╚██╗
 	╚═════╝░░╚═════╝░╚═╝░░░░░╚═╝╚═╝░░░░░╚═╝░░╚═╝╚═╝░░╚═╝
-	"${NC}
+	${LOG_COLOR_RESET}"
 }
 
 # Usage/Help
 function _usage() {
-	printf "  \e[1;32;40m \u2730 Usage: \$ %s <Firmware File/Extracted Folder -OR- Supported Website Link> \e[0m\n" "${0}"
-	printf "\t\e[1;32m -> Firmware File: The .zip/.rar/.7z/.tar/.bin/.ozip/.kdz etc. file \e[0m\n\n"
-	sleep .5s
-	printf " \e[1;34m >> Supported Websites: \e[0m\n"
-	printf "\e[36m\t1. Directly Accessible Download Link From Any Website\n"
-	printf "\t2. Filehosters like - mega.nz | mediafire | gdrive | onedrive | androidfilehost\e[0m\n"
-	printf "\t\e[33m >> Must Wrap Website Link Inside Single-quotes ('')\e[0m\n"
-	sleep .2s
-	printf " \e[1;34m >> Supported File Formats For Direct Operation:\e[0m\n"
-	printf "\t\e[36m *.zip | *.rar | *.7z | *.tar | *.tar.gz | *.tgz | *.tar.md5\n"
-	printf "\t *.ozip | *.ofp | *.ops | *.kdz | ruu_*exe\n"
-	printf "\t system.new.dat | system.new.dat.br | system.new.dat.xz\n"
-	printf "\t system.new.img | system.img | system-sign.img | UPDATE.APP\n"
-	printf "\t *.emmc.img | *.img.ext4 | system.bin | system-p | payload.bin\n"
-	printf "\t *.nb0 | .*chunk* | *.pac | *super*.img | *system*.sin\e[0m\n\n"
+	echo ""
+	log_info "Usage: ${0} <Firmware File/Extracted Folder -OR- Supported Website Link>"
+	echo ""
+	echo "  Firmware File: The .zip/.rar/.7z/.tar/.bin/.ozip/.kdz etc. file"
+	echo ""
+	echo "  Supported Websites:"
+	echo "    1. Directly Accessible Download Link From Any Website"
+	echo "    2. Filehosters like - mega.nz | mediafire | gdrive | onedrive | androidfilehost"
+	echo "    Note: Must Wrap Website Link Inside Single-quotes ('')"
+	echo ""
+	echo "  Supported File Formats:"
+	echo "    *.zip | *.rar | *.7z | *.tar | *.tar.gz | *.tgz | *.tar.md5"
+	echo "    *.ozip | *.ofp | *.ops | *.kdz | ruu_*exe"
+	echo "    system.new.dat | system.new.dat.br | system.new.dat.xz"
+	echo "    system.new.img | system.img | system-sign.img | UPDATE.APP"
+	echo "    *.emmc.img | *.img.ext4 | system.bin | system-p | payload.bin"
+	echo "    *.nb0 | .*chunk* | *.pac | *super*.img | *system*.sin"
+	echo ""
+	echo "  Options:"
+	echo "    --verbose, -v     Enable verbose (debug) logging"
+	echo "    --quiet, -q       Quiet mode (only errors)"
+	echo "    --dry-run         Don't actually perform operations"
+	echo "    --no-colors       Disable colored output"
+	echo "    --config FILE     Use specific configuration file"
+	echo "    --help, -h        Show this help message"
+	echo ""
 }
 
 # Welcome Banner
-printf "\e[32m" && __bannerTop && printf "\e[0m" && sleep 0.3s
+__bannerTop
+
+# Parse command line arguments
+FIRMWARE_INPUT=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--verbose|-v)
+			export DUMPRX_VERBOSE_MODE=true
+			log_set_level "DEBUG"
+			shift
+			;;
+		--quiet|-q)
+			export DUMPRX_QUIET_MODE=true
+			shift
+			;;
+		--dry-run)
+			export DUMPRX_DRY_RUN=true
+			log_info "DRY RUN mode enabled - no actual operations will be performed"
+			shift
+			;;
+		--no-colors)
+			export DUMPRX_LOG_COLORS=false
+			shift
+			;;
+		--config)
+			config_load "$2"
+			shift 2
+			;;
+		--help|-h)
+			_usage
+			exit 0
+			;;
+		*)
+			if [[ -z "${FIRMWARE_INPUT}" ]]; then
+				FIRMWARE_INPUT="$1"
+			else
+				log_error "Multiple firmware inputs detected. Please provide only one."
+				_usage
+				exit 1
+			fi
+			shift
+			;;
+	esac
+done
 
 # Function Input Check
-if [[ $# = 0 ]]; then
-	printf "\n  \e[1;31;40m \u2620 Error: No Input Is Given.\e[0m\n\n"
-	sleep .5s && _usage && sleep 1s && exit 1
-elif [[ "${1}" = "" ]]; then
-	printf "\n  \e[1;31;40m ! BRUH: Enter Firmware Path.\e[0m\n\n"
-	sleep .5s && _usage && sleep 1s && exit 1
-elif [[ "${1}" = " " || -n "$2" ]]; then
-	printf "\n  \e[1;31;40m ! BRUH: Enter Only Firmware File Path.\e[0m\n\n"
-	sleep .5s && _usage && sleep 1s && exit 1
-else
-	_usage			# Output Usage By Default
+if [[ -z "${FIRMWARE_INPUT}" ]]; then
+	log_error "No input provided."
+	_usage
+	exit 1
 fi
 
-# Set Base Project Directory
-PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
-if echo "${PROJECT_DIR}" | grep " "; then
-	printf "\nProject Directory Path Contains Empty Space,\nPlace The Script In A Proper UNIX-Formatted Folder\n\n"
-	sleep 1s && exit 1
+log_header "DumprX - Android Firmware Extraction Tool"
+
+# Validate Project Directory
+if util_has_spaces "${PROJECT_DIR}"; then
+	log_fatal "Project directory path contains spaces. Please move the script to a proper UNIX-formatted folder."
+	exit 1
 fi
+
+log_debug "Project directory: ${PROJECT_DIR}"
 
 # Sanitize And Generate Folders
-INPUTDIR="${PROJECT_DIR}"/input		# Firmware Download/Preload Directory
-UTILSDIR="${PROJECT_DIR}"/utils		# Contains Supportive Programs
-OUTDIR="${PROJECT_DIR}"/out			# Contains Final Extracted Files
-TMPDIR="${OUTDIR}"/tmp				# Temporary Working Directory
+log_step "Setting up directories"
+INPUTDIR="${PROJECT_DIR}/input"		# Firmware Download/Preload Directory
+UTILSDIR="${PROJECT_DIR}/utils"		# Contains Supportive Programs
+OUTDIR="${PROJECT_DIR}/out"			# Contains Final Extracted Files
+TMPDIR="${OUTDIR}/tmp"				# Temporary Working Directory
 
-rm -rf "${TMPDIR}" 2>/dev/null
-mkdir -p "${OUTDIR}" "${TMPDIR}" 2>/dev/null
+util_remove "${TMPDIR}"
+util_mkdir "${OUTDIR}" || exit 1
+util_mkdir "${TMPDIR}" || exit 1
 
+log_debug "Input directory: ${INPUTDIR}"
+log_debug "Utils directory: ${UTILSDIR}"
+log_debug "Output directory: ${OUTDIR}"
+log_debug "Temp directory: ${TMPDIR}"
+
+# Clone/Update External Tools
+log_step "Checking external tools"
 EXTERNAL_TOOLS=(
 	bkerler/oppo_ozip_decrypt
 	bkerler/oppo_decrypt
@@ -86,12 +166,23 @@ EXTERNAL_TOOLS=(
 )
 
 for tool_slug in "${EXTERNAL_TOOLS[@]}"; do
-	if ! [[ -d "${UTILSDIR}"/"${tool_slug#*/}" ]]; then
-		git clone -q https://github.com/"${tool_slug}".git "${UTILSDIR}"/"${tool_slug#*/}"
+	tool_name="${tool_slug#*/}"
+	tool_path="${UTILSDIR}/${tool_name}"
+	
+	if [[ ! -d "${tool_path}" ]]; then
+		log_info "Cloning ${tool_name}..."
+		if [[ "${DUMPRX_DRY_RUN}" != "true" ]]; then
+			git clone -q "https://github.com/${tool_slug}.git" "${tool_path}" 2>/dev/null || log_warn "Failed to clone ${tool_name}"
+		fi
 	else
-		git -C "${UTILSDIR}"/"${tool_slug#*/}" pull
+		log_debug "Tool ${tool_name} already exists"
+		if [[ "${DUMPRX_DRY_RUN}" != "true" ]]; then
+			git -C "${tool_path}" pull -q 2>/dev/null || log_debug "Could not update ${tool_name}"
+		fi
 	fi
 done
+
+log_success "External tools ready"
 
 ## See README.md File For Program Credits
 # Set Utility Program Alias
@@ -143,131 +234,158 @@ PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory 
 EXT4PARTITIONS="system vendor cust odm oem factory product xrom systemex oppo_product preload_common hw_product product_h preas preavs optics omr prism persist"
 OTHERPARTITIONS="tz.mbn:tz tz.img:tz modem.img:modem NON-HLOS:modem boot-verified.img:boot recovery-verified.img:recovery dtbo-verified.img:dtbo"
 
-# NOTE: $(pwd) is ${PROJECT_DIR}
-if echo "${1}" | grep -q "${PROJECT_DIR}/input" && [[ $(find "${INPUTDIR}" -maxdepth 1 -type f -size +10M -print | wc -l) -gt 1 ]]; then
-	FILEPATH=$(printf "%s\n" "$1")		# Relative Path To Script
-	FILEPATH=$(realpath "${FILEPATH}")	# Absolute Path
-	printf "Copying Everything Into %s For Further Operations." "${TMPDIR}"
-	cp -a "${FILEPATH}"/* "${TMPDIR}"/
+# NOTE: Handle input from ${PROJECT_DIR}/input
+if echo "${FIRMWARE_INPUT}" | grep -q "${PROJECT_DIR}/input" && [[ $(find "${INPUTDIR}" -maxdepth 1 -type f -size +10M -print | wc -l) -gt 1 ]]; then
+	FILEPATH=$(util_realpath "${FIRMWARE_INPUT}")
+	log_info "Copying files to temporary directory"
+	util_copy "${FILEPATH}"/* "${TMPDIR}/" || exit 1
 	unset FILEPATH
-elif echo "${1}" | grep -q "${PROJECT_DIR}/input/" && [[ $(find "${INPUTDIR}" -maxdepth 1 -type f -size +300M -print | wc -l) -eq 1 ]]; then
-	printf "Input Directory Exists And Contains File\n"
-	cd "${INPUTDIR}"/ || exit
+elif echo "${FIRMWARE_INPUT}" | grep -q "${PROJECT_DIR}/input/" && [[ $(find "${INPUTDIR}" -maxdepth 1 -type f -size +300M -print | wc -l) -eq 1 ]]; then
+	log_info "Input directory contains firmware file"
+	cd "${INPUTDIR}/" || exit 1
 	# Input File Variables
-	FILEPATH=$(find "$(pwd)" -maxdepth 1 -type f -size +300M 2>/dev/null)	# INPUTDIR's FILEPATH is Always File
+	FILEPATH=$(find "$(pwd)" -maxdepth 1 -type f -size +300M 2>/dev/null)
 	FILE=${FILEPATH##*/}
 	EXTENSION=${FILEPATH##*.}
 	if echo "${EXTENSION}" | grep -q "zip\|rar\|7z\|tar$"; then
-		UNZIP_DIR=${FILE%.*}			# Strip The File Extention With %.*
+		UNZIP_DIR=${FILE%.*}
 	fi
 else
 	# Attempt To Download File/Folder From Internet
-	if echo "${1}" | grep -q -e '^\(https\?\|ftp\)://.*$' >/dev/null; then
-		URL=${1}
-		mkdir -p "${INPUTDIR}" 2>/dev/null
-		cd "${INPUTDIR}"/ || exit
-		rm -rf "${INPUTDIR:?}"/* 2>/dev/null
-		if echo "${URL}" | grep -q "mega.nz\|mediafire.com\|drive.google.com"; then
-			( "${MEGAMEDIADRIVE_DL}" "${URL}" ) || exit 1
-		elif echo "${URL}" | grep -q "androidfilehost.com"; then
-			( python3 "${AFHDL}" -l "${URL}" ) || exit 1
-		elif echo "${URL}" | grep -q "/we.tl/"; then
-			( "${TRANSFER}" "${URL}" ) || exit 1
-		else
-			if echo "${URL}" | grep -q "1drv.ms"; then URL=${URL/ms/ws}; fi
-			aria2c -x16 -s8 --console-log-level=warn --summary-interval=0 --check-certificate=false "${URL}" || {
-				wget -q --show-progress --progress=bar:force --no-check-certificate "${URL}" || exit 1
-			}
+	if util_is_url "${FIRMWARE_INPUT}"; then
+		log_step "Downloading firmware from URL"
+		URL=${FIRMWARE_INPUT}
+		util_mkdir "${INPUTDIR}" || exit 1
+		cd "${INPUTDIR}/" || exit 1
+		util_remove "${INPUTDIR:?}"/*
+		
+		# Download using the new downloader library
+		if ! download_file "${URL}" "${INPUTDIR}"; then
+			log_fatal "Download failed"
+			exit 1
 		fi
+		
 		unset URL
-		for f in *; do detox -r "${f}" 2>/dev/null; done		# Detox Filename
+		
+		# Sanitize filenames
+		for f in *; do
+			if [[ -f "${f}" ]]; then
+				if util_command_exists detox; then
+					detox -r "${f}" 2>/dev/null
+				fi
+			fi
+		done
+		
 		# Input File Variables
-		FILEPATH=$(find "$(pwd)" -maxdepth 1 -type f 2>/dev/null)	# Single File
-		printf "\nWorking with %s\n\n" "${FILEPATH##*/}"
-		[[ $(echo "${FILEPATH}" | tr ' ' '\n' | wc -l) -gt 1 ]] && FILEPATH=$(find "$(pwd)" -maxdepth 2 -type d) 	# Base Folder
+		FILEPATH=$(find "$(pwd)" -maxdepth 1 -type f 2>/dev/null)
+		log_info "Working with: ${FILEPATH##*/}"
+		
+		# Check if multiple files or directory
+		if [[ $(echo "${FILEPATH}" | tr ' ' '\n' | wc -l) -gt 1 ]]; then
+			FILEPATH=$(find "$(pwd)" -maxdepth 2 -type d)
+		fi
 	else
-		# For Local File/Folder, Do Not Use Input Directory
-		FILEPATH=$(printf "%s\n" "$1")		# Relative Path To Script
-		FILEPATH=$(realpath "${FILEPATH}")	# Absolute Path
-		if echo "${1}" | grep " "; then
+		# For Local File/Folder
+		log_step "Processing local firmware file/folder"
+		FILEPATH=$(util_realpath "${FIRMWARE_INPUT}")
+		
+		# Sanitize filename if it has spaces
+		if util_has_spaces "${FIRMWARE_INPUT}"; then
 			if [[ -w "${FILEPATH}" ]]; then
-				detox -r "${FILEPATH}" 2>/dev/null
-				FILEPATH=$(echo "${FILEPATH}" | inline-detox)
+				if util_command_exists detox; then
+					detox -r "${FILEPATH}" 2>/dev/null
+					FILEPATH=$(echo "${FILEPATH}" | inline-detox 2>/dev/null) || FILEPATH=$(util_realpath "${FIRMWARE_INPUT}")
+				fi
 			fi
 		fi
-		[[ ! -e "${FILEPATH}" ]] && { echo -e "Input File/Folder Doesn't Exist" && exit 1; }
+		
+		if [[ ! -e "${FILEPATH}" ]]; then
+			log_fatal "Input file/folder doesn't exist: ${FILEPATH}"
+			exit 1
+		fi
+		
+		log_info "Using local file: ${FILEPATH}"
 	fi
+	
 	# Input File Variables
 	FILE=${FILEPATH##*/}
 	EXTENSION=${FILEPATH##*.}
 	if echo "${EXTENSION}" | grep -q "zip\|rar\|7z\|tar$"; then
-		UNZIP_DIR=${FILE%.*}			# Strip The File Extention With %.*
+		UNZIP_DIR=${FILE%.*}
 	fi
+	
 	if [[ -d "${FILEPATH}" || "${EXTENSION}" == "" ]]; then
-		printf "Directory Detected.\n"
+		log_info "Directory detected"
 		if find "${FILEPATH}" -maxdepth 1 -type f | grep -v "compatibility.zip" | grep -q ".*.tar$\|.*.zip\|.*.rar\|.*.7z"; then
-			printf "Supplied Folder Has Compressed Archive That Needs To Re-Load\n"
+			log_info "Folder contains compressed archive, re-loading"
 			# Set From Download Directory
 			ArcPath=$(find "${INPUTDIR}"/ -maxdepth 1 -type f \( -name "*.tar" -o -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) -print | grep -v "compatibility.zip")
 			# If Empty, Set From Original Local Folder
 			[[ -z "${ArcPath}" ]] && ArcPath=$(find "${FILEPATH}"/ -maxdepth 1 -type f \( -name "*.tar" -o -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) -print | grep -v "compatibility.zip")
 			if ! echo "${ArcPath}" | grep -q " "; then
-				# Assuming There're Only One Archive To Re-Load And Process
-				cd "${PROJECT_DIR}"/ || exit
+				# Assuming there's only one archive to re-load and process
+				log_info "Re-loading archive: ${ArcPath}"
+				cd "${PROJECT_DIR}/" || exit
 				( bash "${0}" "${ArcPath}" ) || exit 1
 				exit
 			elif echo "${ArcPath}" | grep -q " "; then
-				printf "More Than One Archive File Is Available In %s Folder.\nPlease Use Direct Archive Path Along With This Toolkit\n" "${FILEPATH}" && exit 1
+				log_error "More than one archive file found in ${FILEPATH}"
+				log_info "Please use direct archive path"
+				exit 1
 			fi
 		elif find "${FILEPATH}" -maxdepth 1 -type f | grep ".*system.ext4.tar.*\|.*chunk\|system\/build.prop\|system.new.dat\|system_new.img\|system.img\|system-sign.img\|system.bin\|payload.bin\|.*rawprogram*\|system.sin\|.*system_.*\.sin\|system-p\|super\|UPDATE.APP\|.*.pac\|.*.nb0" | grep -q -v ".*chunk.*\.so$"; then
-			printf "Copying Everything Into %s For Further Operations." "${TMPDIR}"
-			cp -a "${FILEPATH}"/* "${TMPDIR}"/
+			log_info "Copying firmware files to temporary directory"
+			util_copy "${FILEPATH}"/* "${TMPDIR}/" || exit 1
 			unset FILEPATH
 		else
-			printf "\e[31m BRUH: This type of firmware is not supported.\e[0m\n"
-			cd "${PROJECT_DIR}"/ || exit
-			rm -rf "${TMPDIR}" "${OUTDIR}"
+			log_error "This type of firmware is not supported"
+			util_remove "${TMPDIR}"
+			util_remove "${OUTDIR}"
 			exit 1
 		fi
 	fi
 fi
 
-cd "${PROJECT_DIR}"/ || exit
+cd "${PROJECT_DIR}/" || exit
 
 # Function for Extracting Super Images
 function superimage_extract() {
-    if [ -f super.img ]; then
-        echo "Extracting Partitions from the Super Image..."
-        ${SIMG2IMG} super.img super.img.raw 2>/dev/null
-    fi
-    if [[ ! -s super.img.raw ]] && [ -f super.img ]; then
-        mv super.img super.img.raw
-    fi
-    for partition in $PARTITIONS; do
-        ($LPUNPACK --partition="$partition"_a super.img.raw || $LPUNPACK --partition="$partition" super.img.raw) 2>/dev/null
-        if [ -f "$partition"_a.img ]; then
-            mv "$partition"_a.img "$partition".img
-        else
-            foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep $partition.img)
-            ${BIN_7ZZ} e -y "${FILEPATH}" $foundpartitions dummypartition 2>/dev/null >> $TMPDIR/zip.log
-        fi
-    done
-    rm -rf super.img.raw
+	log_step "Extracting partitions from Super image"
+	if [ -f super.img ]; then
+		log_debug "Converting sparse super image to raw"
+		${SIMG2IMG} super.img super.img.raw 2>/dev/null
+	fi
+	if [[ ! -s super.img.raw ]] && [ -f super.img ]; then
+		mv super.img super.img.raw
+	fi
+	for partition in $PARTITIONS; do
+		($LPUNPACK --partition="$partition"_a super.img.raw || $LPUNPACK --partition="$partition" super.img.raw) 2>/dev/null
+		if [ -f "$partition"_a.img ]; then
+			mv "$partition"_a.img "$partition".img
+		else
+			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep $partition.img)
+			${BIN_7ZZ} e -y "${FILEPATH}" $foundpartitions dummypartition 2>/dev/null >> $TMPDIR/zip.log
+		fi
+	done
+	rm -rf super.img.raw
+	log_success "Super image extraction completed"
 }
 
-printf "Extracting firmware on: %s\n" "${OUTDIR}"
-cd "${TMPDIR}"/ || exit
+log_header "Firmware Extraction Process"
+log_info "Output directory: ${OUTDIR}"
+cd "${TMPDIR}/" || exit
 
 # Oppo .ozip Check
 if [[ $(head -c12 "${FILEPATH}" 2>/dev/null | tr -d '\0') == "OPPOENCRYPT!" ]] || [[ "${EXTENSION}" == "ozip" ]]; then
-	printf "Oppo/Realme ozip Detected.\n"
+	log_step "Oppo/Realme ozip firmware detected"
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
-	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/"${FILE}" 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/"${FILE}"
-	printf "Decrypting ozip And Making A Zip...\n"
-	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "${OZIPDECRYPT}" "${TMPDIR}"/"${FILE}"
-	mkdir -p "${INPUTDIR}" 2>/dev/null && rm -rf -- "${INPUTDIR:?}"/* 2>/dev/null
-	if [[ -f "${FILE%.*}".zip ]]; then
-		mv "${FILE%.*}".zip "${INPUTDIR}"/
+	util_move "${INPUTDIR}/${FILE}" "${TMPDIR}/${FILE}" 2>/dev/null || util_copy "${FILEPATH}" "${TMPDIR}/${FILE}"
+	log_info "Decrypting ozip and creating zip archive"
+	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "${OZIPDECRYPT}" "${TMPDIR}/${FILE}"
+	util_mkdir "${INPUTDIR}"
+	util_remove "${INPUTDIR:?}"/*
+	if [[ -f "${FILE%.*}.zip" ]]; then
+		util_move "${FILE%.*}.zip" "${INPUTDIR}/"
 	elif [[ -d "${TMPDIR}"/out ]]; then
 		mv "${TMPDIR}"/out/* "${INPUTDIR}"/
 	fi

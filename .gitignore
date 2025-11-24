@@ -2,6 +2,9 @@
 .github_orgname
 .tg_token
 .tg_chat
+.gitlab_token
+.gitlab_group
+.gitlab_instance
 .venv/
 input/
 tmp/
@@ -10,3 +13,8 @@ out/
 __pycache__
 utils/oppo_*
 utils/vmlinux*
+utils/android_tools
+utils/pacextractor
+*.log
+dumprx.log
+.dumprx.conf
