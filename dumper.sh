@@ -1550,6 +1550,29 @@ git_push_with_retry() {
 		# Configure git for large repo
 		git_configure_large_repo "." || return 1
 		
+		# Ensure branch exists and has commits before pushing
+		if ! git rev-parse --verify "${branch}" >/dev/null 2>&1; then
+			log_warn "Branch '${branch}' does not exist, will be created with first commit"
+		fi
+		
+		# Check if there are any commits on the current branch
+		if ! git log -1 >/dev/null 2>&1; then
+			log_warn "No commits found on branch ${branch}"
+			log_info "Creating initial commit if staging area has files..."
+			
+			# Check if there are staged changes
+			if ! git diff --cached --quiet 2>/dev/null; then
+				log_info "Staging area has files, committing them"
+				git commit -sm "Initial commit for ${description:-firmware dump}" || {
+					log_error "Failed to create initial commit"
+					return 1
+				}
+			else
+				log_warn "No staged files to commit - push will be skipped"
+				return 0  # Return success as there's nothing to push
+			fi
+		fi
+		
 		# Use improved push with retry
 		local max_attempts=10
 		local attempt=1
@@ -1569,7 +1592,12 @@ git_push_with_retry() {
 				log_warn "Push failed with exit code $exit_code"
 				
 				# Analyze the error
-				if grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
+				if grep -q "src refspec.*does not match any" /tmp/git_push_output_$$.log; then
+					log_error "Branch ${branch} does not exist or has no commits"
+					log_error "This should not happen as we checked earlier"
+					rm -f /tmp/git_push_output_$$.log
+					return 1
+				elif grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
 					log_warn "Server error detected (HTTP 500/502/503)"
 					# Increase buffer size
 					git config http.postBuffer 1048576000  # 1GB
@@ -1585,6 +1613,8 @@ git_push_with_retry() {
 					find . -type f -size +50M -not -path ".git/*" | while read -r largefile; do
 						git lfs track "$largefile" 2>/dev/null
 					done
+				elif grep -q "failed to push some refs" /tmp/git_push_output_$$.log; then
+					log_warn "Push rejected - checking for diverged history"
 				fi
 				
 				if [ $attempt -lt $max_attempts ]; then
@@ -1611,6 +1641,17 @@ git_push_with_retry() {
 		local max_attempts=5
 		local attempt=1
 		local wait_time=10
+		
+		# Ensure there are commits before pushing
+		if ! git log -1 >/dev/null 2>&1; then
+			echo "No commits found - creating initial commit if needed"
+			if ! git diff --cached --quiet 2>/dev/null; then
+				git commit -sm "Initial commit for ${description:-firmware dump}" || return 1
+			else
+				echo "No staged files to commit"
+				return 0
+			fi
+		fi
 		
 		while [ $attempt -le $max_attempts ]; do
 			echo "Attempting to push (attempt $attempt/$max_attempts)..."
