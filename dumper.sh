@@ -549,15 +549,20 @@ function extract_with_mount() {
 	if [ ${cp_result} -eq 0 ]; then
 		# Move files from temporary to final output directory
 		mkdir -p "${output_dir}" 2>/dev/null
-		sudo cp -rf "${temp_output}/." "${output_dir}/" 2>/dev/null
-		sudo rm -rf "${temp_output}"
-		
-		# Fix permissions
-		sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
-		chmod -R u+rwX "${output_dir}/" 2>/dev/null
-		
-		log_debug "Successfully copied files from mount"
-		return 0
+		if sudo cp -rf "${temp_output}/." "${output_dir}/" 2>/dev/null; then
+			sudo rm -rf "${temp_output}"
+			
+			# Fix permissions
+			sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
+			chmod -R u+rwX "${output_dir}/" 2>/dev/null
+			
+			log_debug "Successfully copied files from mount"
+			return 0
+		else
+			log_error "Failed to copy files from temporary directory to output directory"
+			sudo rm -rf "${temp_output}"
+			return 1
+		fi
 	else
 		log_error "Failed to copy files from mount"
 		sudo rm -rf "${temp_output}"
