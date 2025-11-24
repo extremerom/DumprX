@@ -371,8 +371,8 @@ function superimage_extract() {
 		if [ -f "$partition"_a.img ]; then
 			mv "$partition"_a.img "$partition".img
 		else
-			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep $partition.img)
-			${BIN_7ZZ} e -y "${FILEPATH}" $foundpartitions dummypartition 2>/dev/null >> $TMPDIR/zip.log
+			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep "$partition".img)
+			${BIN_7ZZ} e -y "${FILEPATH}" "$foundpartitions" dummypartition 2>/dev/null >> "$TMPDIR"/zip.log
 		fi
 	done
 	rm -rf super.img.raw
@@ -425,8 +425,36 @@ function extract_with_7z() {
 	local output_dir="$3"
 	
 	log_debug "Attempting extraction with 7z..."
-	${BIN_7ZZ} x -snld "${img_file}" -y -o"${output_dir}/" >/dev/null 2>&1
-	return $?
+	
+	# Create output directory
+	mkdir -p "${output_dir}" 2>/dev/null
+	
+	# Try extraction with timeout and capture output
+	local extract_output
+	extract_output=$(timeout 300 ${BIN_7ZZ} x -snld "${img_file}" -y -o"${output_dir}/" 2>&1)
+	local extract_status=$?
+	
+	# Check extraction status
+	if [[ ${extract_status} -eq 0 ]]; then
+		# Verify that files were actually extracted
+		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+			log_debug "Successfully extracted with 7z"
+			return 0
+		else
+			log_warn "7z completed but no files extracted"
+			return 1
+		fi
+	elif [[ ${extract_status} -eq 124 ]]; then
+		log_warn "7z extraction timed out after 5 minutes"
+		return 1
+	else
+		log_debug "7z extraction failed with status ${extract_status}"
+		# Check if it's a "not archive" error
+		if echo "${extract_output}" | grep -qi "Can't open\|is not archive\|Unsupported"; then
+			log_debug "File is not a valid 7z/ext4 archive"
+		fi
+		return 1
+	fi
 }
 
 # Extract partition using fsck.erofs
@@ -436,8 +464,40 @@ function extract_with_erofs() {
 	local output_dir="$3"
 	
 	log_debug "Attempting extraction with fsck.erofs..."
-	"${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1 | grep -v "^$"
-	return $?
+	
+	# Check if fsck.erofs is available and functional
+	if ! command -v "${FSCK_EROFS}" >/dev/null 2>&1; then
+		log_debug "fsck.erofs not found"
+		return 1
+	fi
+	
+	# Create output directory
+	mkdir -p "${output_dir}" 2>/dev/null
+	
+	# Try extraction with timeout to prevent hanging
+	local extract_output
+	extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
+	local extract_status=$?
+	
+	# Check if extraction was successful
+	if [[ ${extract_status} -eq 0 ]]; then
+		# Verify that files were actually extracted
+		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+			log_debug "Successfully extracted with fsck.erofs"
+			return 0
+		else
+			log_warn "fsck.erofs completed but no files extracted"
+			return 1
+		fi
+	elif [[ ${extract_status} -eq 124 ]]; then
+		log_warn "fsck.erofs extraction timed out after 5 minutes"
+		return 1
+	else
+		log_debug "fsck.erofs extraction failed with status ${extract_status}"
+		# Show relevant error messages only
+		echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
+		return 1
+	fi
 }
 
 # Extract partition using mount loop
@@ -452,34 +512,77 @@ function extract_with_mount() {
 	# Create temporary mount point
 	mkdir -p "${temp_mount}" 2>/dev/null
 	
-	# Try to mount
-	if sudo mount -o loop,ro -t auto "${img_file}" "${temp_mount}" 2>/dev/null; then
-		log_debug "Successfully mounted ${partition}"
-		
-		# Copy contents
-		if sudo cp -rf "${temp_mount}/"* "${output_dir}/" 2>/dev/null; then
-			log_debug "Successfully copied files from mount"
-			
-			# Unmount
-			sudo umount "${temp_mount}" 2>/dev/null
-			rm -rf "${temp_mount}"
-			
-			# Fix permissions
-			sudo chown -R "$(whoami)" "${output_dir}/"* 2>/dev/null
-			chmod -R u+rwX "${output_dir}/"* 2>/dev/null
-			
-			return 0
-		else
-			log_warn "Failed to copy files from mount"
-			sudo umount "${temp_mount}" 2>/dev/null
-			rm -rf "${temp_mount}"
-			return 1
+	# Try to mount with specific filesystem types
+	local mount_success=false
+	local fs_types=("auto" "erofs" "ext4" "f2fs")
+	
+	for fs_type in "${fs_types[@]}"; do
+		if sudo mount -o loop,ro -t "${fs_type}" "${img_file}" "${temp_mount}" 2>/dev/null; then
+			log_debug "Successfully mounted ${partition} as ${fs_type}"
+			mount_success=true
+			break
 		fi
-	else
+	done
+	
+	if ! ${mount_success}; then
 		log_warn "Failed to mount ${partition}"
 		rm -rf "${temp_mount}"
 		return 1
 	fi
+	
+	# Copy contents with better error handling and chunking for large directories
+	log_debug "Copying files from mount (this may take a while for large partitions)..."
+	
+	# Use rsync if available (better for large transfers), otherwise use cp with timeout
+	if command -v rsync >/dev/null 2>&1; then
+		if timeout 600 sudo rsync -a --info=progress2 "${temp_mount}/" "${output_dir}/" 2>/dev/null; then
+			log_debug "Successfully copied files from mount using rsync"
+			sudo umount "${temp_mount}" 2>/dev/null
+			rm -rf "${temp_mount}"
+			
+			# Fix permissions
+			sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
+			chmod -R u+rwX "${output_dir}/" 2>/dev/null
+			
+			return 0
+		else
+			log_warn "rsync copy failed or timed out"
+		fi
+	fi
+	
+	# Fallback to chunked cp with tar
+	log_debug "Trying tar-based copy method..."
+	if (cd "${temp_mount}" && sudo tar cf - .) | (cd "${output_dir}" && sudo tar xf -) 2>/dev/null; then
+		log_debug "Successfully copied files using tar"
+		sudo umount "${temp_mount}" 2>/dev/null
+		rm -rf "${temp_mount}"
+		
+		# Fix permissions
+		sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
+		chmod -R u+rwX "${output_dir}/" 2>/dev/null
+		
+		return 0
+	fi
+	
+	# Final fallback - basic cp with find (slower but more reliable)
+	log_debug "Trying find-based copy method..."
+	if sudo find "${temp_mount}" -mindepth 1 -maxdepth 1 -exec cp -rf {} "${output_dir}/" \; 2>/dev/null; then
+		log_debug "Successfully copied files using find"
+		sudo umount "${temp_mount}" 2>/dev/null
+		rm -rf "${temp_mount}"
+		
+		# Fix permissions
+		sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
+		chmod -R u+rwX "${output_dir}/" 2>/dev/null
+		
+		return 0
+	fi
+	
+	# All methods failed
+	log_warn "Failed to copy files from mount"
+	sudo umount "${temp_mount}" 2>/dev/null
+	rm -rf "${temp_mount}"
+	return 1
 }
 
 # Extract a single partition image with automatic method detection
@@ -521,10 +624,32 @@ function extract_partition_image() {
 		fi
 	fi
 	
-	# Try extraction methods in order
+	# Try extraction methods in order based on filesystem type
 	local extraction_success=false
 	
-	# Method 1: Try 7z first (works for ext4, some others)
+	# For EROFS: Try mount first (most reliable), then fsck.erofs, then 7z
+	if [[ "${fs_type}" == "erofs" ]]; then
+		log_info "Trying mount loop extraction for EROFS..."
+		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with mount loop"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "Mount loop extraction failed for ${partition}, trying fsck.erofs..."
+		fi
+		
+		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with fsck.erofs"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "fsck.erofs extraction failed for ${partition}"
+		fi
+	fi
+	
+	# For ext4 or unknown: Try 7z first (fast), then mount
 	if [[ "${fs_type}" == "ext4" ]] || [[ "${fs_type}" == "unknown" ]]; then
 		if extract_with_7z "${partition}" "${img_file}" "${output_dir}"; then
 			log_success "Extracted ${partition} with 7z"
@@ -536,21 +661,22 @@ function extract_partition_image() {
 		fi
 	fi
 	
-	# Method 2: Try fsck.erofs for EROFS images
-	if [[ "${fs_type}" == "erofs" ]]; then
-		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
-			log_success "Extracted ${partition} with fsck.erofs"
+	# For F2FS and other filesystems: Try mount directly
+	if [[ "${fs_type}" == "f2fs" ]] || [[ "${fs_type}" == "squashfs" ]]; then
+		log_info "Trying mount loop extraction for ${fs_type}..."
+		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with mount loop"
 			rm -f "${img_file}" 2>/dev/null
 			extraction_success=true
 			return 0
 		else
-			log_warn "fsck.erofs extraction failed for ${partition}"
+			log_warn "Mount loop extraction failed for ${partition}"
 		fi
 	fi
 	
-	# Method 3: Try mount loop as last resort
+	# Last resort: Try mount loop for any remaining cases
 	if ! ${extraction_success}; then
-		log_info "Trying mount loop extraction..."
+		log_info "Trying mount loop extraction as fallback..."
 		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
 			log_success "Extracted ${partition} with mount loop"
 			rm -f "${img_file}" 2>/dev/null
@@ -812,23 +938,23 @@ if echo "${FILEPATH}" | grep -i "^ruu_" | grep -q -i "exe$" || [[ "${EXTENSION}"
 fi
 
 # Amlogic upgrade package (AML) Check
-if [[ $(${BIN_7ZZ} l -ba "${FILEPATH}" | grep -i aml) ]]; then
+if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -qi aml; then
 	log_step "Amlogic upgrade package detected"
-	cp "${FILEPATH}" ${TMPDIR}
-	FILE="${TMPDIR}/$(basename ${FILEPATH})"
+	cp "${FILEPATH}" "${TMPDIR}"
+	FILE="${TMPDIR}/$(basename "${FILEPATH}")"
 	log_info "Extracting AML package..."
-	${BIN_7ZZ} e -y "${FILEPATH}" >> ${TMPDIR}/zip.log
-	"${AML_EXTRACT}" $(find . -type f -name "*aml*.img")
-	rename 's/.PARTITION$/.img/' *.PARTITION
-	rename 's/_aml_dtb.img$/dtb.img/' *.img
-	rename 's/_a.img/.img/' *.img
+	${BIN_7ZZ} e -y "${FILEPATH}" >> "${TMPDIR}"/zip.log
+	"${AML_EXTRACT}" "$(find . -type f -name "*aml*.img")"
+	rename 's/.PARTITION$/.img/' ./*.PARTITION
+	rename 's/_aml_dtb.img$/dtb.img/' ./*.img
+	rename 's/_a.img/.img/' ./*.img
 	if [[ -f super.img ]]; then
 		superimage_extract || exit 1
 	fi
 	for partition in $PARTITIONS; do
 		[[ -e "${TMPDIR}/${partition}.img" ]] && mv "${TMPDIR}/${partition}.img" "${OUTDIR}/${partition}.img"
 	done
-	rm -rf ${TMPDIR}
+	rm -rf "${TMPDIR}"
 	log_success "AML package extraction completed"
 fi
 
@@ -855,8 +981,8 @@ fi
 if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system.new.dat*" -print | wc -l) -ge 1 ]]; then
 	log_step "A-only DAT-formatted OTA detected"
 	for partition in $PARTITIONS; do
-		${BIN_7ZZ} e -y "${FILEPATH}" ${partition}.new.dat* ${partition}.transfer.list ${partition}.img 2>/dev/null >> ${TMPDIR}/zip.log
-		${BIN_7ZZ} e -y "${FILEPATH}" ${partition}.*.new.dat* ${partition}.*.transfer.list ${partition}.*.img 2>/dev/null >> ${TMPDIR}/zip.log
+		${BIN_7ZZ} e -y "${FILEPATH}" "${partition}".new.dat* "${partition}".transfer.list "${partition}".img 2>/dev/null >> "${TMPDIR}"/zip.log
+		${BIN_7ZZ} e -y "${FILEPATH}" "${partition}".*".new.dat*" "${partition}".*".transfer.list" "${partition}".*".img" 2>/dev/null >> "${TMPDIR}"/zip.log
 		rename 's/(\w+)\.(\d+)\.(\w+)/$1.$3/' *
 		# For Oplus A-only OTAs, eg OnePlus Nord 2. Regex matches the 8 digits of Oplus NV ID (prop ro.build.oplus_nv_id) to remove them.
 		# hello@world:~/test_regex# rename -n 's/(\w+)\.(\d+)\.(\w+)/$1.$3/' *
@@ -864,8 +990,8 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 		# rename(my_bigball.00011011.patch.dat, my_bigball.patch.dat)
 		# rename(my_bigball.00011011.transfer.list, my_bigball.transfer.list)
 		if [[ -f ${partition}.new.dat.1 ]]; then
-			cat ${partition}.new.dat.{0..999} 2>/dev/null >> ${partition}.new.dat
-			rm -rf ${partition}.new.dat.{0..999}
+			cat "${partition}".new.dat.{0..999} 2>/dev/null >> "${partition}".new.dat
+			rm -rf "${partition}".new.dat.{0..999}
 		fi
 		dat_files=()
 		while IFS= read -r -d '' file; do
@@ -875,7 +1001,7 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 		for i in "${dat_files[@]}"; do
 			line=$(basename "$i" | cut -d"." -f1)
 			if [[ "$i" =~ \.dat\.xz$ ]]; then
-				${BIN_7ZZ} e -y "$i" 2>/dev/null >> ${TMPDIR}/zip.log
+				${BIN_7ZZ} e -y "$i" 2>/dev/null >> "${TMPDIR}"/zip.log
 				rm -rf "$i"
 			fi
 			if [[ "$i" =~ \.dat\.br$ ]]; then
@@ -885,27 +1011,27 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 			fi
 			if [[ "$i" =~ \.new\.dat$ ]]; then
 				log_debug "Extracting ${line} partition"
-				python3 ${SDAT2IMG} ${line}.transfer.list ${line}.new.dat "${OUTDIR}"/${line}.img > ${TMPDIR}/extract.log
-				rm -rf ${line}.transfer.list ${line}.new.dat
+				python3 "${SDAT2IMG}" "${line}".transfer.list "${line}".new.dat "${OUTDIR}"/"${line}".img > "${TMPDIR}"/extract.log
+				rm -rf "${line}".transfer.list "${line}".new.dat
 			fi
 		done
 	done
 	log_success "DAT extraction completed"
-elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep rawprogram || [[ $(find "${TMPDIR}" -type f -name "*rawprogram*" | wc -l) -ge 1 ]]; then
+elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q rawprogram || [[ $(find "${TMPDIR}" -type f -name "*rawprogram*" | wc -l) -ge 1 ]]; then
 	log_step "QFIL firmware detected"
-	rawprograms=$(${BIN_7ZZ} l -ba ${FILEPATH} | gawk '{ print $NF }' | grep rawprogram)
-	${BIN_7ZZ} e -y ${FILEPATH} $rawprograms 2>/dev/null >> ${TMPDIR}/zip.log
+	rawprograms=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{ print $NF }' | grep rawprogram)
+	${BIN_7ZZ} e -y "${FILEPATH}" "$rawprograms" 2>/dev/null >> "${TMPDIR}"/zip.log
 	log_info "Extracting partitions from QFIL package..."
 	for partition in $PARTITIONS; do
-		partitionsonzip=$(${BIN_7ZZ} l -ba ${FILEPATH} | gawk '{ print $NF }' | grep $partition)
-		if [[ ! $partitionsonzip == "" ]]; then
-			${BIN_7ZZ} e -y ${FILEPATH} $partitionsonzip 2>/dev/null >> ${TMPDIR}/zip.log
+		partitionsonzip=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{ print $NF }' | grep "$partition")
+		if [[ -n "$partitionsonzip" ]]; then
+			${BIN_7ZZ} e -y "${FILEPATH}" "$partitionsonzip" 2>/dev/null >> "${TMPDIR}"/zip.log
 			if [[ ! -f "$partition.img" ]]; then
 				if [[ -f "$partition.raw.img" ]]; then
 					mv "$partition.raw.img" "$partition.img"
 				else
-					rawprogramsfile=$(grep -rlw $partition rawprogram*.xml)
-					"${PACKSPARSEIMG}" -t $partition -x $rawprogramsfile > ${TMPDIR}/extract.log
+					rawprogramsfile=$(grep -rlw "$partition" rawprogram*.xml)
+					"${PACKSPARSEIMG}" -t "$partition" -x "$rawprogramsfile" > "${TMPDIR}"/extract.log
 					mv "$partition.raw" "$partition.img"
 				fi
 			fi
@@ -979,8 +1105,8 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.sin\|.*system_.*\.sin" 2>/
 	"${UNSIN}" -d "${TMPDIR}"
 	find "${TMPDIR}" -maxdepth 1 -type f -name "*.ext4" | while read -r i; do mv "${i}" "${i/.ext4/.img}" 2>/dev/null; done	# proper names
 	foundsuperinsin=$(find "${TMPDIR}" -maxdepth 1 -type f -name "super_*.img")
-	if [ ! -z $foundsuperinsin ]; then
-		mv $(ls ${TMPDIR}/super_*.img) "${TMPDIR}/super.img"
+	if [ ! -z "$foundsuperinsin" ]; then
+		mv "${TMPDIR}"/super_*.img "${TMPDIR}/super.img" 2>/dev/null
 		log_info "Super image detected inside sin file"
 		superimage_extract || exit 1
 	fi
@@ -992,7 +1118,7 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".pac$" 2>/dev/null || [[ $(find "${T
 	pac_list=$(find . -type f -name "*.pac" | cut -d'/' -f'2-' | sort)
 	log_info "Extracting $(echo "${pac_list}" | wc -l) PAC file(s)..."
 	for file in ${pac_list}; do
-		python3 "${PACEXTRACTOR}" "${file}" $(pwd)
+		python3 "${PACEXTRACTOR}" "${file}" "$(pwd)"
 	done
 	if [[ -f super.img ]]; then
 		superimage_extract || exit 1
@@ -1053,11 +1179,14 @@ elif [[ $(${BIN_7ZZ} l -ba "$FILEPATH" | grep "super.img") ]]; then
 	log_step "Super image detected in archive"
 	foundsupers=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{ print $NF }' | grep "super.img")
 	${BIN_7ZZ} e -y "${FILEPATH}" $foundsupers dummypartition 2>/dev/null >> ${TMPDIR}/zip.log
-	superchunk=$(ls | grep chunk | grep super | sort)
-	if [[ $(echo "$superchunk" | grep "sparsechunk") ]]; then
+	# Use find instead of ls | grep
+	superchunk=$(find . -maxdepth 1 -type f -name "*super*chunk*" | sort)
+	if echo "$superchunk" | grep -q "sparsechunk"; then
 		log_info "Converting sparse super chunks..."
-		"${SIMG2IMG}" $(echo "$superchunk" | tr '\n' ' ') super.img.raw 2>/dev/null
-		rm -rf *super*chunk*
+		# Word splitting is intentional here - simg2img requires multiple files as separate arguments
+		# shellcheck disable=SC2086
+		"${SIMG2IMG}" ${superchunk} super.img.raw 2>/dev/null
+		rm -rf ./*super*chunk*
 	fi
 	superimage_extract || exit 1
 elif [[ $(find "${TMPDIR}" -type f -name "super*.*img" | wc -l) -ge 1 ]]; then
@@ -1066,11 +1195,14 @@ elif [[ $(find "${TMPDIR}" -type f -name "super*.*img" | wc -l) -ge 1 ]]; then
 		foundsupers=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep "super.*img")
 		${BIN_7ZZ} e -y -- "${FILEPATH}" "${foundsupers}" dummypartition 2>/dev/null >> "${TMPDIR}"/zip.log
 	fi
-	splitsupers=$(ls | grep -oP "super.[0-9].+.img")
-	if [[ ! -z "${splitsupers}" ]]; then
+	# Use find instead of ls | grep
+	splitsupers=$(find . -maxdepth 1 -type f -name "super.[0-9]*.img" | sort)
+	if [[ -n "${splitsupers}" ]]; then
 		log_info "Creating super.img from split files..."
+		# Word splitting is intentional here - simg2img requires multiple files as separate arguments
+		# shellcheck disable=SC2086
 		"${SIMG2IMG}" ${splitsupers} super.img.raw 2>/dev/null
-		rm -rf -- ${splitsupers}
+		rm -rf ${splitsupers}
 	fi
 	superchunk=$(find . -maxdepth 1 -type f -name "*super*chunk*" | cut -d'/' -f'2-' | sort)
 	if echo "${superchunk}" | grep -q "sparsechunk"; then

@@ -283,7 +283,8 @@ function git_push_with_retry() {
 			return 0
 		fi
 		
-		local exit_code=$?
+		local exit_code
+		exit_code=$?
 		
 		# Check for specific errors
 		if grep -q "src refspec.*does not match any" /tmp/git_push_$$.log; then

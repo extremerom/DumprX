@@ -22,7 +22,7 @@ pout() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_info "$*"
 	else
-		printf "${C_OUT}${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "${C_OUT}${*}"
 	fi
 }
 
@@ -30,7 +30,7 @@ perr() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_error "$*"
 	else
-		printf "${C_ERR}${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "${C_ERR}${*}"
 	fi
 }
 
@@ -38,7 +38,7 @@ psuccess() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_success "$*"
 	else
-		printf "\033[0;32m${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "\033[0;32m${*}"
 	fi
 }
 
@@ -46,13 +46,13 @@ pdebug() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_debug "$*"
 	else
-		printf "\033[0;36m${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "\033[0;36m${*}"
 	fi
 }
 
 unpack_complete()
 {
-	[ ! -z $format ] && echo format=$format >> ../img_info
+	[ -n "$format" ] && echo "format=$format" >> ../img_info
 	psuccess "Unpack completed."
 	exit
 }
@@ -64,16 +64,16 @@ usage()
 	pout "-----------------------------------------------------"
 	perr " Not enough parameters or parameter error!"
 	pout " unpack boot.img & decompress ramdisk:"
-	pout "    $(basename $0) [img] [output dir]"
-	pout "    $(basename $0) boot.img boot20130905\n"
+	pout "    $(basename "$0") [img] [output dir]"
+	pout "    $(basename "$0") boot.img boot20130905\n"
 	exit
 }
 
 #decide action
 [ $# -lt 2 ] || [ $# -gt 3 ] && usage
 
-tempdir="$(readlink -f $2)"
-mkdir -p $tempdir
+tempdir="$(readlink -f "$2")"
+mkdir -p "$tempdir"
 
 if [[ "${USE_LOGGER}" == "true" ]]; then
 	log_step "Unpacking boot image"
@@ -84,9 +84,9 @@ else
 fi
 
 # Get boot.img info
-cp -f $1 $tempdir/
-cd $tempdir
-bootimg="$(basename $1)"
+cp -f "$1" "$tempdir/"
+cd "$tempdir" || exit
+bootimg="$(basename "$1")"
 offset=$(grep -abo "ANDROID!\|VNDRBOOT" $bootimg | cut -f 1 -d :)
 [ -z $offset ] && exit
 if [ $offset -gt 0 ]; then
@@ -219,11 +219,10 @@ if [ $dtbo_size -gt 0 ]; then
     dd if=$bootimg of=dtbo.img_tmp bs=$page_size skip=$do_offset count=$do_count 2>/dev/null
     dd if=dtbo.img_tmp of=dtbo.img bs=$dtbo_size count=1 2>/dev/null
     dtbo="$tempdir/dtbo.img"
-    dtbo=$(basename $dtbo)
+    dtbo=$(basename "$dtbo")
     do_name="dtbo=$dtbo\n"
 fi
-rm -f *_tmp $(basename $1) $bootimg
-
+rm -f ./*_tmp "${bootimg}"
 kernel=kernel
 ramdisk=ramdisk
 [ "$VNDRBOOT" == "false" ] && [ ! -s $kernel ] && exit
@@ -286,7 +285,7 @@ if [ $ramdisk_packed_header = $mtk_header_magic ]; then
     rm -f ramdisk.packed.mtk
 fi
 
-mkdir ramdisk && cd ramdisk
+mkdir ramdisk && cd ramdisk || exit
 
 if gzip -t ../ramdisk.packed 2>/dev/null; then
     psuccess "ramdisk is gzip format."
@@ -312,10 +311,41 @@ if lzop -t ../ramdisk.packed 2>/dev/null; then
     lzop -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
     unpack_complete
 fi
-if lz4 -d ../ramdisk.packed 2>/dev/null | cpio -i -d -m --no-absolute-filenames 2>/dev/null; then
+if lz4 -t ../ramdisk.packed 2>/dev/null; then
     psuccess "ramdisk is lz4 format."
     format=lz4
-else
-    perr "ramdisk is unknown format, can't unpack ramdisk"
+    lz4 -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
+    unpack_complete
 fi
+# Try zstd compression (common in newer Android versions)
+if command -v zstd >/dev/null 2>&1; then
+    if zstd -t ../ramdisk.packed 2>/dev/null; then
+        psuccess "ramdisk is zstd format."
+        format=zstd
+        zstd -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
+        unpack_complete
+    fi
+fi
+# Try bzip2 compression
+if bzip2 -t ../ramdisk.packed 2>/dev/null; then
+    psuccess "ramdisk is bzip2 format."
+    format=bzip2
+    bzip2 -d -c ../ramdisk.packed | cpio -i -d -m --no-absolute-filenames 2>/dev/null
+    unpack_complete
+fi
+# Try as raw cpio (uncompressed)
+if cpio -i -d -m --no-absolute-filenames < ../ramdisk.packed 2>/dev/null; then
+    psuccess "ramdisk is uncompressed cpio format."
+    format=cpio
+    unpack_complete
+fi
+# If ramdisk.packed is empty or very small, it might be intentionally empty
+if [ ! -s ../ramdisk.packed ] || [ "$(stat -c%s ../ramdisk.packed)" -lt 100 ]; then
+    psuccess "ramdisk is empty (vendor_boot or init_boot may not have ramdisk)."
+    format=empty
+    unpack_complete
+fi
+# Unknown format - keep the packed file for manual inspection
+perr "ramdisk is unknown format, can't unpack ramdisk"
+cp ../ramdisk.packed ../ramdisk.unknown 2>/dev/null
 unpack_complete

@@ -34,7 +34,7 @@ function util_check_dependencies() {
 function util_sanitize_filename() {
 	local filename="$1"
 	# Remove or replace problematic characters
-	filename=$(echo "${filename}" | sed 's/[^a-zA-Z0-9._-]/_/g')
+	filename="${filename//[^a-zA-Z0-9._-]/_}"
 	echo "${filename}"
 }
 
