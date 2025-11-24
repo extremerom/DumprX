@@ -138,6 +138,11 @@ AFHDL="${UTILSDIR}"/downloaders/afh_dl.py
 # EROFS
 FSCK_EROFS=${UTILSDIR}/bin/fsck.erofs
 
+# Source payload utility functions (v2, v3, v4 header support)
+if [[ -f "${UTILSDIR}"/payload_functions.sh ]]; then
+	source "${UTILSDIR}"/payload_functions.sh
+fi
+
 # Partition List That Are Currently Supported
 PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory product xrom modem dtbo dtb boot vendor_boot recovery tz oppo_product preload_common opproduct reserve india my_preload my_odm my_stock my_operator my_country my_product my_company my_engineering my_heytap my_custom my_manifest my_carrier my_region my_bigball my_version special_preload system_dlkm vendor_dlkm odm_dlkm init_boot vendor_kernel_boot odmko socko nt_log mi_ext hw_product product_h preas preavs optics omr prism persist"
 EXT4PARTITIONS="system vendor cust odm oem factory product xrom systemex oppo_product preload_common hw_product product_h preas preavs optics omr prism persist"
@@ -648,7 +653,57 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep tar.md5 | gawk '{print $NF}' | grep -
 	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q payload.bin 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "payload.bin" | wc -l) -ge 1 ]]; then
 	printf "AB OTA Payload Detected\n"
-	${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" "${FILEPATH}" >/dev/null
+	
+	# Find payload.bin file
+	PAYLOAD_FILE=""
+	if [[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q payload.bin 2>/dev/null; then
+		# Extract payload.bin from archive first
+		${BIN_7ZZ} e -y "${FILEPATH}" payload.bin -o"${TMPDIR}" 2>/dev/null >> "${TMPDIR}"/zip.log
+		PAYLOAD_FILE="${TMPDIR}/payload.bin"
+	else
+		# Already extracted
+		PAYLOAD_FILE=$(find "${TMPDIR}" -type f -name "payload.bin" | head -1)
+	fi
+	
+	if [[ -n "${PAYLOAD_FILE}" && -f "${PAYLOAD_FILE}" ]]; then
+		# Validate and display payload header information
+		if command -v validate_payload_header >/dev/null 2>&1; then
+			printf "Validating payload.bin header...\n"
+			PAYLOAD_VERSION=$(validate_payload_header "${PAYLOAD_FILE}" true)
+			VALIDATE_RET=$?
+			
+			if [[ $VALIDATE_RET -eq 0 && -n "${PAYLOAD_VERSION}" ]]; then
+				printf "\e[32mPayload Header Version: v${PAYLOAD_VERSION}\e[0m\n"
+				VERSION_INFO=$(get_payload_version_info "${PAYLOAD_VERSION}")
+				printf "Info: ${VERSION_INFO}\n"
+				
+				# List partitions before extraction
+				printf "\nListing partitions in payload.bin...\n"
+				list_payload_partitions "${PAYLOAD_FILE}" "${PAYLOAD_EXTRACTOR}" || true
+				printf "\n"
+				
+				# Extract with enhanced error handling
+				printf "Starting payload extraction with $(nproc --all) workers...\n"
+				extract_payload_safe "${PAYLOAD_FILE}" "${TMPDIR}" "${PAYLOAD_EXTRACTOR}" "$(nproc --all)"
+				EXTRACT_RET=$?
+				
+				if [[ $EXTRACT_RET -ne 0 ]]; then
+					printf "\e[31mERROR: Payload extraction failed (exit code: $EXTRACT_RET)\e[0m\n"
+					printf "Attempting basic extraction without validation...\n"
+					${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" "${PAYLOAD_FILE}"
+				fi
+			else
+				printf "\e[33mWARNING: Payload validation failed, proceeding with standard extraction\e[0m\n"
+				${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" "${PAYLOAD_FILE}"
+			fi
+		else
+			# Fallback to original behavior if functions not available
+			${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" "${PAYLOAD_FILE}"
+		fi
+	else
+		printf "\e[31mERROR: payload.bin file not found\e[0m\n"
+		exit 1
+	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".*.rar\|.*.zip\|.*.7z\|.*.tar$" 2>/dev/null || [[ $(find "${TMPDIR}" -type f \( -name "*.rar" -o -name "*.zip" -o -name "*.7z" -o -name "*.tar" \) | wc -l) -ge 1 ]]; then
 	printf "Rar/Zip/7Zip/Tar Archived Firmware Detected\n"
 	if [[ -f "${FILEPATH}" ]]; then
