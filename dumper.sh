@@ -1238,30 +1238,96 @@ rm -rf "${TMPDIR}" 2>/dev/null
 
 # Helper function to push with retry logic
 git_push_with_retry() {
-	local max_attempts=5
-	local attempt=1
-	local wait_time=10
-	
-	while [ $attempt -le $max_attempts ]; do
-		echo "Attempting to push (attempt $attempt/$max_attempts)..."
-		if git push -u origin "${branch}"; then
-			echo "Push successful!"
-			return 0
-		else
-			local exit_code=$?
-			echo "Push failed with exit code $exit_code"
-			if [ $attempt -lt $max_attempts ]; then
-				echo "Waiting ${wait_time} seconds before retry..."
-				sleep $wait_time
-				# Exponential backoff
-				wait_time=$((wait_time * 2))
-				attempt=$((attempt + 1))
+	# Use new git_upload library for better handling
+	if [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
+		source "${PROJECT_DIR}/lib/git_upload.sh"
+		
+		# Configure git for large repo
+		git_configure_large_repo "." || return 1
+		
+		# Use improved push with retry
+		local max_attempts=10
+		local attempt=1
+		local wait_time=5
+		local max_wait=300  # 5 minutes max
+		
+		while [ $attempt -le $max_attempts ]; do
+			log_info "Attempting to push (attempt $attempt/$max_attempts)..."
+			
+			# Try push with detailed logging
+			if git push --progress -u origin "${branch}" 2>&1 | tee /tmp/git_push_output_$$.log; then
+				log_success "Push successful!"
+				rm -f /tmp/git_push_output_$$.log
+				return 0
 			else
-				echo "ERROR: Failed to push after $max_attempts attempts"
-				return 1
+				local exit_code=$?
+				log_warn "Push failed with exit code $exit_code"
+				
+				# Analyze the error
+				if grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
+					log_warn "Server error detected (HTTP 500/502/503)"
+					# Increase buffer size
+					git config http.postBuffer 1048576000  # 1GB
+					git config http.version HTTP/1.1
+				elif grep -q "RPC failed" /tmp/git_push_output_$$.log; then
+					log_warn "RPC failed - adjusting settings"
+					git config pack.windowMemory 128m
+					git config pack.packSizeLimit 128m
+				elif grep -q "too large" /tmp/git_push_output_$$.log || grep -q "larger than" /tmp/git_push_output_$$.log; then
+					log_error "Files too large - consider using Git LFS"
+					# Enable LFS tracking for large files
+					git lfs install 2>/dev/null
+					find . -type f -size +50M -not -path ".git/*" | while read -r largefile; do
+						git lfs track "$largefile" 2>/dev/null
+					done
+				fi
+				
+				if [ $attempt -lt $max_attempts ]; then
+					log_info "Waiting ${wait_time} seconds before retry..."
+					sleep $wait_time
+					# Exponential backoff with cap
+					wait_time=$((wait_time * 2))
+					if [ $wait_time -gt $max_wait ]; then
+						wait_time=$max_wait
+					fi
+					attempt=$((attempt + 1))
+				else
+					log_error "Failed to push after $max_attempts attempts"
+					log_info "Last error output:"
+					tail -20 /tmp/git_push_output_$$.log
+					rm -f /tmp/git_push_output_$$.log
+					return 1
+				fi
 			fi
-		fi
-	done
+		done
+		rm -f /tmp/git_push_output_$$.log
+	else
+		# Fallback to original implementation
+		local max_attempts=5
+		local attempt=1
+		local wait_time=10
+		
+		while [ $attempt -le $max_attempts ]; do
+			echo "Attempting to push (attempt $attempt/$max_attempts)..."
+			if git push -u origin "${branch}"; then
+				echo "Push successful!"
+				return 0
+			else
+				local exit_code=$?
+				echo "Push failed with exit code $exit_code"
+				if [ $attempt -lt $max_attempts ]; then
+					echo "Waiting ${wait_time} seconds before retry..."
+					sleep $wait_time
+					# Exponential backoff
+					wait_time=$((wait_time * 2))
+					attempt=$((attempt + 1))
+				else
+					echo "ERROR: Failed to push after $max_attempts attempts"
+					return 1
+				fi
+			fi
+		done
+	fi
 }
 
 # Helper function to split a large directory into multiple parts
@@ -1368,11 +1434,37 @@ commit_and_push(){
 		"persist"
 	)
 
-	git lfs install
-	[ -e ".gitattributes" ] || find . -type f -not -path ".git/*" -size +100M -exec git lfs track {} \;
+	# Initialize Git LFS with better tracking patterns
+	log_step "Setting up Git LFS for large files"
+	git lfs install 2>/dev/null
+	
+	# Track common large file types
+	local lfs_patterns=(
+		"*.so"
+		"*.so.*"
+		"*.apk"
+		"*.jar"
+		"*.ttf"
+		"*.otf"
+		"*.ttc"
+		"*.png"
+		"*.spv"
+		"*.dat"
+		"*.bin"
+	)
+	
+	for pattern in "${lfs_patterns[@]}"; do
+		git lfs track "$pattern" 2>/dev/null
+	done
+	
+	# Track any remaining files > 50MB
+	find . -type f -not -path ".git/*" -size +50M | while read -r largefile; do
+		git lfs track "$largefile" 2>/dev/null
+	done
+	
 	[ -e ".gitattributes" ] && {
 		git add ".gitattributes"
-		git commit -sm "Setup Git LFS"
+		git commit -sm "Setup Git LFS for large files"
 		git_push_with_retry || return 1
 	}
 
@@ -1384,15 +1476,15 @@ commit_and_push(){
 	
 	local apk_count=${#apk_files[@]}
 	if [ $apk_count -gt 0 ]; then
-		echo "Found $apk_count APK files, splitting into batches..."
-		local batch_size=50
+		log_info "Found $apk_count APK files, splitting into batches..."
+		local batch_size=30  # Reduced from 50 for safer pushes
 		local batch_num=1
 		local total_batches=$(( (apk_count + batch_size - 1) / batch_size ))
 		
 		for ((i=0; i<$apk_count; i+=batch_size)); do
 			local batch=("${apk_files[@]:i:batch_size}")
 			if [ ${#batch[@]} -gt 0 ]; then
-				echo "Adding APK batch $batch_num/$total_batches (${#batch[@]} files)..."
+				log_info "Adding APK batch $batch_num/$total_batches (${#batch[@]} files)..."
 				git add "${batch[@]}"
 				if ! git diff --cached --quiet; then
 					git commit -sm "Add apps batch $batch_num/$total_batches for ${description}"
@@ -1558,19 +1650,37 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	# Remove The Journal File Inside System/Vendor
 	find . -mindepth 2 -type d -name "\[SYS\]" -exec rm -rf {} \; 2>/dev/null
 	split_files 62M 47M
-	printf "\nFinal Repository Should Look Like...\n" && ls -lAog
-	printf "\n\nStarting Git Init...\n"
-	git init		# Insure Your Github Authorization Before Running This Script
-	# Configure git for better handling of large repositories and network issues
-	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
-	git config http.lowSpeedLimit 0			# Disable low speed limit
-	git config http.lowSpeedTime 999999		# Increase timeout
-	git config pack.windowMemory 256m			# Reduce memory usage during pack
-	git config pack.packSizeLimit 256m		# Limit pack file size
-	git config core.compression 0				# Disable compression for speed
+	log_info "Final Repository Contents:"
+	ls -lAog
+	
+	log_step "Initializing Git repository"
+	git init
+	
+	# Use improved git configuration from git_upload library
+	if [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
+		source "${PROJECT_DIR}/lib/git_upload.sh"
+		git_configure_large_repo "." || log_warn "Could not configure git optimally"
+	else
+		# Fallback to basic configuration
+		git config http.postBuffer 524288000
+		git config http.lowSpeedLimit 0
+		git config http.lowSpeedTime 999999
+		git config pack.windowMemory 256m
+		git config pack.packSizeLimit 256m
+		git config core.compression 0
+	fi
+	
+	# Additional optimizations for GitHub
+	git config http.version HTTP/1.1
+	git config http.retryDelay 5
+	git config http.retries 10
+	git config core.bigFileThreshold 50m
+	
 	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
+	
+	log_step "Creating GitHub repository"
 	if [[ "${GIT_ORG}" == "${GIT_USER}" ]]; then
 		curl -s -X POST -H "Authorization: token ${GITHUB_TOKEN}" -d '{"name": "'"${repo}"'", "description": "'"${description}"'"}' "https://api.github.com/user/repos" >/dev/null 2>&1
 	else
@@ -1579,7 +1689,9 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	curl -s -X PUT -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: application/vnd.github.mercy-preview+json" -d '{ "names": ["'"${platform}"'","'"${manufacturer}"'","'"${top_codename}"'","firmware","dump"]}' "https://api.github.com/repos/${GIT_ORG}/${repo}/topics" 	# Update Repository Topics
 	
 	# Commit and Push
-	printf "\nPushing to %s via HTTPS...\nBranch:%s\n" "https://github.com/${GIT_ORG}/${repo}.git" "${branch}"
+	log_header "Pushing Firmware to GitHub"
+	log_info "Repository: https://github.com/${GIT_ORG}/${repo}.git"
+	log_info "Branch: ${branch}"
 	sleep 1
 	git remote add origin https://${GITHUB_TOKEN}@github.com/${GIT_ORG}/${repo}.git
 	commit_and_push
