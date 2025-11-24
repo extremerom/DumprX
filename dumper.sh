@@ -540,7 +540,7 @@ fi
 
 # Extract & Move Raw Otherpartitons To OUTDIR
 if [[ -f "${FILEPATH}" ]]; then
-	local other_partition_count=0
+	other_partition_count=0
 	for otherpartition in ${OTHERPARTITIONS}; do
 		filename=${otherpartition%:*} && outname=${otherpartition#*:}
 		if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "${filename}"; then
@@ -573,7 +573,7 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 			cat ${partition}.new.dat.{0..999} 2>/dev/null >> ${partition}.new.dat
 			rm -rf ${partition}.new.dat.{0..999}
 		fi
-		local dat_files=()
+		dat_files=()
 		while IFS= read -r -d '' file; do
 			dat_files+=("$file")
 		done < <(find . -maxdepth 1 -name "*.new.dat*" -print0)
@@ -791,8 +791,8 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep tar.md5 | gawk '{print $NF}' | grep -
 	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} e -y "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
 	
 	# Extract tar.md5 archives
-	local tarmd5_files=(*.tar.md5)
-	local tarmd5_count=${#tarmd5_files[@]}
+	tarmd5_files=(*.tar.md5)
+	tarmd5_count=${#tarmd5_files[@]}
 	if [[ -e "${tarmd5_files[0]}" ]]; then
 		log_info "Extracting ${tarmd5_count} tar.md5 archive(s)..."
 		for i in "${tarmd5_files[@]}"; do
@@ -803,9 +803,9 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep tar.md5 | gawk '{print $NF}' | grep -
 	fi
 	
 	# Extract lz4 archives
-	local lz4_files=(*.lz4)
+	lz4_files=(*.lz4)
 	if [[ -e "${lz4_files[0]}" ]]; then
-		local lz4_count=${#lz4_files[@]}
+		lz4_count=${#lz4_files[@]}
 		log_info "Extracting ${lz4_count} lz4 archive(s)..."
 		for f in "${lz4_files[@]}"; do
 			lz4 -dc "${f}" > "${f/.lz4/}" || exit 1
@@ -815,7 +815,7 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep tar.md5 | gawk '{print $NF}' | grep -
 	fi
 	
 	# Rename Samsung ext4 files
-	local ext4_files=()
+	ext4_files=()
 	while IFS= read -r -d '' file; do
 		ext4_files+=("$file")
 	done < <(find -maxdepth 1 -type f -name '*.ext4' -printf '%P\0')
@@ -907,7 +907,7 @@ fi
 # $(pwd) == "${TMPDIR}"
 
 # Process All otherpartitions From TMPDIR Now
-local other_parts_processed=0
+other_parts_processed=0
 for otherpartition in ${OTHERPARTITIONS}; do
 	filename=${otherpartition%:*} && outname=${otherpartition#*:}
 	output=$(ls -- "${filename}"* 2>/dev/null)
