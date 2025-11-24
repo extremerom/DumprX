@@ -1109,15 +1109,73 @@ find "$OUTDIR" -type f -printf '%P\n' | sort | grep -v ".git/" > "$OUTDIR"/all_f
 
 rm -rf "${TMPDIR}" 2>/dev/null
 
+# Helper function to split a large directory into three parts
+split_and_push_directory() {
+	local dir_name="$1"
+	local dir_path="$2"
+	local exclude_pattern="$3"
+	
+	if [ ! -d "$dir_path" ]; then
+		return 0
+	fi
+	
+	# Get all subdirectories in the directory
+	local SUBDIRS=()
+	while IFS= read -r -d '' subdir; do
+		local dirname=$(basename "$subdir")
+		# Skip excluded patterns if provided
+		if [ -n "$exclude_pattern" ] && [[ "$dirname" =~ $exclude_pattern ]]; then
+			continue
+		fi
+		SUBDIRS+=("$dirname")
+	done < <(find "$dir_path" -maxdepth 1 -type d -not -path "$dir_path" -print0 2>/dev/null | sort -z)
+	
+	# Calculate how many subdirs per part (ceiling division to split into 3 parts)
+	local total=${#SUBDIRS[@]}
+	local part_size=$(( (total + 2) / 3 ))  # Ceiling division by 3: (n+2)/3
+	
+	# Push subdirectories in three parts
+	for part in 1 2 3; do
+		local start_idx=$(( (part - 1) * part_size ))
+		local end_idx=$(( part * part_size ))
+		
+		# Add subdirectories for this part
+		local has_content=false
+		for (( idx=$start_idx; idx<$end_idx && idx<$total; idx++ )); do
+			local subdir="${SUBDIRS[$idx]}"
+			if [ -d "$dir_path/$subdir" ]; then
+				git add "$dir_path/$subdir"
+				has_content=true
+			fi
+		done
+		
+		# Also handle root-level files for the first part
+		if [ $part -eq 1 ]; then
+			# Check if there are any root-level files
+			if [ -n "$(find "$dir_path" -maxdepth 1 -type f 2>/dev/null)" ]; then
+				find "$dir_path" -maxdepth 1 -type f -exec git add {} \; 2>/dev/null
+				has_content=true
+			fi
+		fi
+		
+		# Commit and push this part if there's content
+		if [ "$has_content" = true ]; then
+			# Only commit if there are staged changes (git diff returns non-zero when changes exist)
+			if ! git diff --cached --quiet; then
+				git commit -sm "Add ${dir_name} part ${part}/3 for ${description}"
+				git push -u origin "${branch}"
+			fi
+		fi
+	done
+}
+
 commit_and_push(){
 	local DIRS=(
-		"system_ext"
 		"product"
 		"system_dlkm"
 		"odm"
 		"odm_dlkm"
 		"vendor_dlkm"
-		"vendor"
 	)
 
 	git lfs install
@@ -1142,59 +1200,16 @@ commit_and_push(){
 		git push -u origin "${branch}"
 	done
 
-	# Split system directory into three parts to avoid HTTP 500 errors with large files
-	if [ -d "system" ]; then
-		# Get all subdirectories in system (excluding nested system_* dirs already handled)
-		local SYSTEM_SUBDIRS=()
-		while IFS= read -r -d '' subdir; do
-			local dirname=$(basename "$subdir")
-			# Skip system_ext, system_dlkm as they're already handled above
-			if [[ ! "$dirname" =~ ^system_(ext|dlkm)$ ]]; then
-				SYSTEM_SUBDIRS+=("$dirname")
-			fi
-		done < <(find system -maxdepth 1 -type d -not -path "system" -print0 2>/dev/null | sort -z)
-		
-		# Calculate how many subdirs per part (ceiling division to split into 3 parts)
-		local total=${#SYSTEM_SUBDIRS[@]}
-		local part_size=$(( (total + 2) / 3 ))  # Ceiling division by 3: (n+2)/3
-		
-		# Push system subdirectories in three parts
-		for part in 1 2 3; do
-			local start_idx=$(( (part - 1) * part_size ))
-			local end_idx=$(( part * part_size ))
-			
-			# Add subdirectories for this part
-			local has_content=false
-			for (( idx=$start_idx; idx<$end_idx && idx<$total; idx++ )); do
-				local subdir="${SYSTEM_SUBDIRS[$idx]}"
-				if [ -d "system/$subdir" ]; then
-					git add "system/$subdir"
-					has_content=true
-				fi
-			done
-			
-			# Also handle root-level files in system for the first part
-			if [ $part -eq 1 ]; then
-				# Check if any files were found and added
-				if find system -maxdepth 1 -type f -exec git add {} \; 2>/dev/null | grep -q .; then
-					has_content=true
-				elif [ -n "$(find system -maxdepth 1 -type f 2>/dev/null)" ]; then
-					has_content=true
-				fi
-			fi
-			
-			# Commit and push this part if there's content
-			if [ "$has_content" = true ]; then
-				# Only commit if there are staged changes
-				if git diff --cached --quiet; then
-					printf "No changes to commit for system part %s/3\n" "${part}"
-				else
-					git commit -sm "Add system part ${part}/3 for ${description}"
-					git push -u origin "${branch}"
-				fi
-			fi
-		done
-	fi
+	# Split large directories into three parts to avoid HTTP 500 errors with large files
+	# system_ext directory (excluding nested system_* dirs)
+	split_and_push_directory "system_ext" "system_ext" '^system_(dlkm)$'
+	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" '^system_(dlkm)$'
+	
+	# vendor directory
+	split_and_push_directory "vendor" "vendor" ''
+	
+	# system directory (excluding nested system_* dirs already handled)
+	split_and_push_directory "system" "system" '^system_(ext|dlkm)$'
 
 	git add .
 	git commit -sm "Add extras for ${description}"
