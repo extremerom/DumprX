@@ -1109,11 +1109,12 @@ find "$OUTDIR" -type f -printf '%P\n' | sort | grep -v ".git/" > "$OUTDIR"/all_f
 
 rm -rf "${TMPDIR}" 2>/dev/null
 
-# Helper function to split a large directory into three parts
+# Helper function to split a large directory into multiple parts
 split_and_push_directory() {
 	local dir_name="$1"
 	local dir_path="$2"
 	local exclude_pattern="$3"
+	local num_parts="${4:-3}"  # Default to 3 parts if not specified
 	
 	if [ ! -d "$dir_path" ]; then
 		return 0
@@ -1130,12 +1131,12 @@ split_and_push_directory() {
 		SUBDIRS+=("$dirname")
 	done < <(find "$dir_path" -maxdepth 1 -type d -not -path "$dir_path" -print0 2>/dev/null | sort -z)
 	
-	# Calculate how many subdirs per part (ceiling division to split into 3 parts)
+	# Calculate how many subdirs per part (ceiling division)
 	local total=${#SUBDIRS[@]}
-	local part_size=$(( (total + 2) / 3 ))  # Ceiling division by 3: (n+2)/3
+	local part_size=$(( (total + num_parts - 1) / num_parts ))  # Ceiling division
 	
-	# Push subdirectories in three parts
-	for part in 1 2 3; do
+	# Push subdirectories in multiple parts
+	for (( part=1; part<=num_parts; part++ )); do
 		local start_idx=$(( (part - 1) * part_size ))
 		local end_idx=$(( part * part_size ))
 		
@@ -1149,11 +1150,11 @@ split_and_push_directory() {
 			fi
 		done
 		
-		# Also handle root-level files for the first part
+		# Also handle root-level files for the first part (excluding .spv and .png files)
 		if [ $part -eq 1 ]; then
-			# Check if there are any root-level files
-			if [ -n "$(find "$dir_path" -maxdepth 1 -type f 2>/dev/null)" ]; then
-				find "$dir_path" -maxdepth 1 -type f -exec git add {} \; 2>/dev/null
+			# Check if there are any root-level files (excluding .spv and .png files)
+			if [ -n "$(find "$dir_path" -maxdepth 1 -type f ! -name '*.spv' ! -name '*.png' 2>/dev/null)" ]; then
+				find "$dir_path" -maxdepth 1 -type f ! -name '*.spv' ! -name '*.png' -exec git add {} \; 2>/dev/null
 				has_content=true
 			fi
 		fi
@@ -1162,11 +1163,41 @@ split_and_push_directory() {
 		if [ "$has_content" = true ]; then
 			# Only commit if there are staged changes (git diff returns non-zero when changes exist)
 			if ! git diff --cached --quiet; then
-				git commit -sm "Add ${dir_name} part ${part}/3 for ${description}"
+				git commit -sm "Add ${dir_name} part ${part}/${num_parts} for ${description}"
 				git push -u origin "${branch}"
 			fi
 		fi
 	done
+}
+
+# Helper function to commit .spv and .png files separately
+commit_binary_files_separately() {
+	local dir_path="$1"
+	local dir_name="$2"
+	
+	if [ ! -d "$dir_path" ]; then
+		return 0
+	fi
+	
+	# Commit .spv files separately
+	if [ -n "$(find "$dir_path" -type f -name '*.spv' 2>/dev/null)" ]; then
+		echo "Committing .spv files from ${dir_name} separately..."
+		find "$dir_path" -type f -name '*.spv' -exec git add {} \; 2>/dev/null
+		if ! git diff --cached --quiet; then
+			git commit -sm "Add .spv files for ${description}"
+			git push -u origin "${branch}"
+		fi
+	fi
+	
+	# Commit .png files separately
+	if [ -n "$(find "$dir_path" -type f -name '*.png' 2>/dev/null)" ]; then
+		echo "Committing .png files from ${dir_name} separately..."
+		find "$dir_path" -type f -name '*.png' -exec git add {} \; 2>/dev/null
+		if ! git diff --cached --quiet; then
+			git commit -sm "Add .png files for ${description}"
+			git push -u origin "${branch}"
+		fi
+	fi
 }
 
 commit_and_push(){
@@ -1204,16 +1235,22 @@ commit_and_push(){
 		git push -u origin "${branch}"
 	done
 
-	# Split large directories into three parts to avoid HTTP 500 errors with large files
+	# Split large directories into multiple parts to avoid HTTP 500 errors with large files
+	
+	# Commit .spv and .png files separately before splitting system directories
+	commit_binary_files_separately "system" "system"
+	commit_binary_files_separately "system/system" "system/system"
+	
 	# system_ext directory (no need to exclude system_* subdirs as they shouldn't exist here)
-	split_and_push_directory "system_ext" "system_ext" ''
-	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" ''
+	split_and_push_directory "system_ext" "system_ext" '' 3
+	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" '' 3
 	
 	# vendor directory
-	split_and_push_directory "vendor" "vendor" ''
+	split_and_push_directory "vendor" "vendor" '' 3
 	
 	# system directory (excluding nested system_ext and system_dlkm already handled above)
-	split_and_push_directory "system" "system" '^system_(ext|dlkm)$'
+	# Split into 6 parts to handle large number of files
+	split_and_push_directory "system" "system" '^system_(ext|dlkm)$' 6
 
 	git add .
 	git commit -sm "Add extras for ${description}"
