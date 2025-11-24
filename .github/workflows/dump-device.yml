@@ -1,0 +1,80 @@
+name: Create Device Dump
+
+on:
+  workflow_dispatch:
+    inputs:
+      dump_url:
+        description: 'URL del dump del firmware (debe estar entre comillas simples si contiene caracteres especiales)'
+        required: true
+        type: string
+      repo_url:
+        description: 'URL del repositorio de destino (ej: https://github.com/usuario/repo)'
+        required: true
+        type: string
+      github_token:
+        description: 'Token de GitHub con permisos de escritura'
+        required: true
+        type: string
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unace unrar zip unzip p7zip-full p7zip-rar sharutils rar uudeview mpack arj cabextract device-tree-compiler liblzma-dev python3-pip brotli liblz4-tool axel gawk aria2 detox cpio rename liblz4-dev jq git-lfs
+      
+      - name: Install uv for Python packages
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
+      - name: Configure Git
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "GitHub Actions Bot"
+      
+      - name: Setup GitHub token
+        run: |
+          echo "${{ inputs.github_token }}" > .github_token
+      
+      - name: Extract organization name from repo URL
+        id: extract_org
+        run: |
+          # Extract org/user name from URL
+          REPO_URL="${{ inputs.repo_url }}"
+          # Remove protocol
+          REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||' | sed 's|git@github.com:||' | sed 's|\.git$||')
+          # Get organization/user name (first part before /)
+          ORG_NAME=$(echo "$REPO_PATH" | cut -d'/' -f1)
+          echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
+          echo "Extracted organization name: $ORG_NAME"
+      
+      - name: Setup GitHub organization name
+        run: |
+          echo "${{ steps.extract_org.outputs.org_name }}" > .github_orgname
+      
+      - name: Run dumper script
+        run: |
+          chmod +x dumper.sh
+          ./dumper.sh '${{ inputs.dump_url }}'
+        env:
+          GITHUB_TOKEN: ${{ inputs.github_token }}
+      
+      - name: Upload dump artifacts (if not pushed to GitHub)
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: device-dump
+          path: out/
+          retention-days: 7
