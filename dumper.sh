@@ -1109,6 +1109,34 @@ find "$OUTDIR" -type f -printf '%P\n' | sort | grep -v ".git/" > "$OUTDIR"/all_f
 
 rm -rf "${TMPDIR}" 2>/dev/null
 
+# Helper function to push with retry logic
+git_push_with_retry() {
+	local max_attempts=5
+	local attempt=1
+	local wait_time=10
+	
+	while [ $attempt -le $max_attempts ]; do
+		echo "Attempting to push (attempt $attempt/$max_attempts)..."
+		if git push -u origin "${branch}"; then
+			echo "Push successful!"
+			return 0
+		else
+			local exit_code=$?
+			echo "Push failed with exit code $exit_code"
+			if [ $attempt -lt $max_attempts ]; then
+				echo "Waiting ${wait_time} seconds before retry..."
+				sleep $wait_time
+				# Exponential backoff
+				wait_time=$((wait_time * 2))
+				attempt=$((attempt + 1))
+			else
+				echo "ERROR: Failed to push after $max_attempts attempts"
+				return 1
+			fi
+		fi
+	done
+}
+
 # Helper function to split a large directory into multiple parts
 split_and_push_directory() {
 	local dir_name="$1"
@@ -1164,7 +1192,7 @@ split_and_push_directory() {
 			# Only commit if there are staged changes (git diff returns non-zero when changes exist)
 			if ! git diff --cached --quiet; then
 				git commit -sm "Add ${dir_name} part ${part}/${num_parts} for ${description}"
-				git push -u origin "${branch}"
+				git_push_with_retry || return 1
 			fi
 		fi
 	done
@@ -1185,7 +1213,7 @@ commit_binary_files_separately() {
 		find "$dir_path" -type f -name '*.spv' -exec git add {} \; 2>/dev/null
 		if ! git diff --cached --quiet; then
 			git commit -sm "Add .spv files for ${description}"
-			git push -u origin "${branch}"
+			git_push_with_retry || return 1
 		fi
 	fi
 	
@@ -1195,7 +1223,7 @@ commit_binary_files_separately() {
 		find "$dir_path" -type f -name '*.png' -exec git add {} \; 2>/dev/null
 		if ! git diff --cached --quiet; then
 			git commit -sm "Add .png files for ${description}"
-			git push -u origin "${branch}"
+			git_push_with_retry || return 1
 		fi
 	fi
 }
@@ -1218,21 +1246,47 @@ commit_and_push(){
 	[ -e ".gitattributes" ] && {
 		git add ".gitattributes"
 		git commit -sm "Setup Git LFS"
-		git push -u origin "${branch}"
+		git_push_with_retry || return 1
 	}
 
-	git add $(find -type f -name '*.apk')
-	git commit -sm "Add apps for ${description}"
-	git push -u origin "${branch}"
+	# Split APK files into smaller batches to avoid large commits
+	local apk_files=()
+	while IFS= read -r -d '' file; do
+		apk_files+=("$file")
+	done < <(find . -type f -name '*.apk' -print0 2>/dev/null)
+	
+	local apk_count=${#apk_files[@]}
+	if [ $apk_count -gt 0 ]; then
+		echo "Found $apk_count APK files, splitting into batches..."
+		local batch_size=50
+		local batch_num=1
+		local total_batches=$(( (apk_count + batch_size - 1) / batch_size ))
+		
+		for ((i=0; i<$apk_count; i+=batch_size)); do
+			local batch=("${apk_files[@]:i:batch_size}")
+			if [ ${#batch[@]} -gt 0 ]; then
+				echo "Adding APK batch $batch_num/$total_batches (${#batch[@]} files)..."
+				git add "${batch[@]}"
+				if ! git diff --cached --quiet; then
+					git commit -sm "Add apps batch $batch_num/$total_batches for ${description}"
+					git_push_with_retry || return 1
+				fi
+				batch_num=$((batch_num + 1))
+			fi
+		done
+	fi
 
 	for i in "${DIRS[@]}"; do
-		[ -d "${i}" ] && git add "${i}"
-		[ -d system/"${i}" ] && git add system/"${i}"
-		[ -d system/system/"${i}" ] && git add system/system/"${i}"
-		[ -d vendor/"${i}" ] && git add vendor/"${i}"
+		local dir_added=false
+		[ -d "${i}" ] && { git add "${i}"; dir_added=true; }
+		[ -d system/"${i}" ] && { git add system/"${i}"; dir_added=true; }
+		[ -d system/system/"${i}" ] && { git add system/system/"${i}"; dir_added=true; }
+		[ -d vendor/"${i}" ] && { git add vendor/"${i}"; dir_added=true; }
 
-		git commit -sm "Add ${i} for ${description}"
-		git push -u origin "${branch}"
+		if [ "$dir_added" = true ] && ! git diff --cached --quiet; then
+			git commit -sm "Add ${i} for ${description}"
+			git_push_with_retry || return 1
+		fi
 	done
 
 	# Split large directories into multiple parts to avoid HTTP 500 errors with large files
@@ -1245,12 +1299,12 @@ commit_and_push(){
 	split_and_push_directory "system_ext" "system_ext" '' 3
 	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" '' 3
 	
-	# vendor directory
-	split_and_push_directory "vendor" "vendor" '' 3
+	# vendor directory - increase splits to avoid large commits
+	split_and_push_directory "vendor" "vendor" '' 5
 	
 	# system directory (excluding nested system_ext and system_dlkm already handled above)
-	# Split into 6 parts to handle large number of files
-	split_and_push_directory "system" "system" '^system_(ext|dlkm)$' 6
+	# Split into 8 parts to handle large number of files
+	split_and_push_directory "system" "system" '^system_(ext|dlkm)$' 8
 
 	# Commit individual firmware partitions separately
 	local FIRMWARE_PARTITIONS=(
@@ -1283,14 +1337,65 @@ commit_and_push(){
 		if [ "$has_partition" = true ]; then
 			if ! git diff --cached --quiet; then
 				git commit -sm "Add ${partition} for ${description}"
-				git push -u origin "${branch}"
+				git_push_with_retry || return 1
 			fi
 		fi
 	done
 
-	git add .
-	git commit -sm "Add extras for ${description}"
-	git push -u origin "${branch}"
+	# Split remaining files into smaller chunks instead of one large commit
+	echo "Adding remaining files in smaller batches..."
+	local remaining_files=()
+	while IFS= read -r -d '' file; do
+		remaining_files+=("$file")
+	done < <(git ls-files --others --exclude-standard -z 2>/dev/null)
+	
+	local remaining_count=${#remaining_files[@]}
+	
+	if [ $remaining_count -gt 0 ]; then
+		echo "Found $remaining_count remaining files, splitting into batches..."
+		local file_batch_size=100
+		local file_batch_num=1
+		local total_file_batches=$(( (remaining_count + file_batch_size - 1) / file_batch_size ))
+		
+		for ((i=0; i<$remaining_count; i+=file_batch_size)); do
+			local file_batch=("${remaining_files[@]:i:file_batch_size}")
+			if [ ${#file_batch[@]} -gt 0 ]; then
+				echo "Adding extras batch $file_batch_num/$total_file_batches (${#file_batch[@]} files)..."
+				git add "${file_batch[@]}" 2>/dev/null
+				if ! git diff --cached --quiet; then
+					git commit -sm "Add extras batch $file_batch_num/$total_file_batches for ${description}"
+					git_push_with_retry || return 1
+				fi
+				file_batch_num=$((file_batch_num + 1))
+			fi
+		done
+	fi
+	
+	# Final check for any remaining unstaged files - use batching to avoid large commits
+	local final_files=()
+	while IFS= read -r -d '' file; do
+		final_files+=("$file")
+	done < <(git ls-files --others --exclude-standard -z 2>/dev/null)
+	
+	if [ ${#final_files[@]} -gt 0 ]; then
+		echo "Found ${#final_files[@]} final unstaged files, adding in batches..."
+		local final_batch_size=50
+		local final_batch_num=1
+		local total_final_batches=$(( (${#final_files[@]} + final_batch_size - 1) / final_batch_size ))
+		
+		for ((i=0; i<${#final_files[@]}; i+=final_batch_size)); do
+			local final_batch=("${final_files[@]:i:final_batch_size}")
+			if [ ${#final_batch[@]} -gt 0 ]; then
+				echo "Adding final batch $final_batch_num/$total_final_batches (${#final_batch[@]} files)..."
+				git add "${final_batch[@]}" 2>/dev/null
+				if ! git diff --cached --quiet; then
+					git commit -sm "Add final extras batch $final_batch_num/$total_final_batches for ${description}"
+					git_push_with_retry || return 1
+				fi
+				final_batch_num=$((final_batch_num + 1))
+			fi
+		done
+	fi
 }
 
 split_files(){
@@ -1329,7 +1434,13 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	printf "\nFinal Repository Should Look Like...\n" && ls -lAog
 	printf "\n\nStarting Git Init...\n"
 	git init		# Insure Your Github Authorization Before Running This Script
-	git config --global http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	# Configure git for better handling of large repositories and network issues
+	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	git config http.lowSpeedLimit 0			# Disable low speed limit
+	git config http.lowSpeedTime 999999		# Increase timeout
+	git config pack.windowMemory 256m			# Reduce memory usage during pack
+	git config pack.packSizeLimit 256m		# Limit pack file size
+	git config core.compression 0				# Disable compression for speed
 	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
@@ -1397,7 +1508,13 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	printf "\n\nStarting Git Init...\n"
 
 	git init		# Insure Your GitLab Authorization Before Running This Script
-	git config --global http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	# Configure git for better handling of large repositories and network issues
+	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	git config http.lowSpeedLimit 0			# Disable low speed limit
+	git config http.lowSpeedTime 999999		# Increase timeout
+	git config pack.windowMemory 256m			# Reduce memory usage during pack
+	git config pack.packSizeLimit 256m		# Limit pack file size
+	git config core.compression 0				# Disable compression for speed
 	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
