@@ -227,7 +227,7 @@ function git_commit_chunks() {
 function git_push_with_retry() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3}"  # No default - branch must be specified
+	local branch="$3"  # No default - branch must be specified
 	local max_retries="${4:-10}"
 	
 	# Validate branch parameter
@@ -343,7 +343,7 @@ function git_push_with_retry() {
 function git_push_shallow() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3}"  # No default - branch must be specified
+	local branch="$3"  # No default - branch must be specified
 	
 	# Validate branch parameter
 	if [[ -z "${branch}" ]]; then
@@ -372,7 +372,7 @@ function git_push_shallow() {
 function git_push_batches() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3}"  # No default - branch must be specified
+	local branch="$3"  # No default - branch must be specified
 	local commits_per_batch="${4:-10}"
 	
 	# Validate branch parameter
