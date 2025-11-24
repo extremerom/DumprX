@@ -21,6 +21,9 @@ You might've used firmware extractor via dumpyara from https://github.com/Androi
 - [x] LG KDZ utilities are updated to support latest firmwares
 - [x] Installation requirements are narrowed down to minimal for playing with this toolkit
 - [x] Recovery Dump is made too
+- [x] **Enhanced payload.bin support with automatic header version detection (v2, v3, v4)** - See [PAYLOAD_SUPPORT.md](PAYLOAD_SUPPORT.md)
+- [x] **Advanced payload validation and inspection utilities**
+- [x] **Improved error handling and logging for OTA payload extraction**
 
 ## Recommendations before Playing with Firmware Dumper
 
@@ -57,6 +60,29 @@ Help Context:
          *.emmc.img | *.img.ext4 | system.bin | system-p | payload.bin
          *.nb0 | .*chunk* | *.pac | *super*.img | *system*.sin
 ```
+
+## New Payload.bin Features
+
+DumprX now includes enhanced support for Android OTA payload.bin files:
+
+### Automatic Header Detection
+- **Supports**: payload.bin header versions v2, v3, v4
+- **Auto-detection**: Automatically identifies Android version and update type
+- **Validation**: Verifies payload integrity before extraction
+
+### Payload Inspection Tool
+Inspect payload.bin without extracting:
+```bash
+./utils/inspect_payload.sh path/to/payload.bin
+```
+
+### Advanced Features
+- Pre-extraction partition listing
+- Enhanced error handling and recovery
+- Detailed logging of extraction process
+- Support for selective partition extraction
+
+📖 **Full documentation**: See [PAYLOAD_SUPPORT.md](PAYLOAD_SUPPORT.md) for detailed information about payload processing features.
 
 ## How to use it to Upload the Dump in GitHub
 
