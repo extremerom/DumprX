@@ -1345,9 +1345,9 @@ commit_and_push(){
 	# Split remaining files into smaller chunks instead of one large commit
 	echo "Adding remaining files in smaller batches..."
 	local remaining_files=()
-	while IFS= read -r file; do
+	while IFS= read -r -d '' file; do
 		remaining_files+=("$file")
-	done < <(git ls-files --others --exclude-standard 2>/dev/null)
+	done < <(git ls-files --others --exclude-standard -z 2>/dev/null)
 	
 	local remaining_count=${#remaining_files[@]}
 	
@@ -1373,9 +1373,9 @@ commit_and_push(){
 	
 	# Final check for any remaining unstaged files - use batching to avoid large commits
 	local final_files=()
-	while IFS= read -r file; do
+	while IFS= read -r -d '' file; do
 		final_files+=("$file")
-	done < <(git ls-files --others --exclude-standard 2>/dev/null)
+	done < <(git ls-files --others --exclude-standard -z 2>/dev/null)
 	
 	if [ ${#final_files[@]} -gt 0 ]; then
 		echo "Found ${#final_files[@]} final unstaged files, adding in batches..."

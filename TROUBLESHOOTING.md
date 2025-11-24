@@ -33,15 +33,17 @@ Files are now split into smaller batches:
 - Remaining files: 100 files per commit
 
 ### 3. Git Configuration Optimizations
-The script sets these configurations to handle large repositories better:
+The script sets these configurations for the repository to handle large repositories better:
 ```bash
-git config --global http.postBuffer 524288000      # 500MB buffer
-git config --global http.lowSpeedLimit 0           # No speed limit
-git config --global http.lowSpeedTime 999999       # Long timeout
-git config --global pack.windowMemory 256m         # Reduce memory
-git config --global pack.packSizeLimit 256m        # Limit pack size
-git config --global core.compression 0             # Faster ops
+git config http.postBuffer 524288000      # 500MB buffer
+git config http.lowSpeedLimit 0           # No speed limit
+git config http.lowSpeedTime 999999       # Long timeout
+git config pack.windowMemory 256m         # Reduce memory
+git config pack.packSizeLimit 256m        # Limit pack size
+git config core.compression 0             # Faster ops
 ```
+
+Note: These are local repository settings and won't affect other repositories on your system.
 
 ## Manual Troubleshooting
 
