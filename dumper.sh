@@ -1266,20 +1266,26 @@ commit_and_push(){
 	)
 	
 	for partition in "${FIRMWARE_PARTITIONS[@]}"; do
+		local has_partition=false
 		# Check for partition as directory
 		if [ -d "${partition}" ]; then
 			git add "${partition}"
-			git commit -sm "Add ${partition} for ${description}"
-			git push -u origin "${branch}"
+			has_partition=true
 		fi
 		# Check for partition as file with common extensions
 		for ext in img bin mbn; do
 			if [ -f "${partition}.${ext}" ]; then
 				git add "${partition}.${ext}"
+				has_partition=true
+			fi
+		done
+		# Only commit if we actually added something
+		if [ "$has_partition" = true ]; then
+			if ! git diff --cached --quiet; then
 				git commit -sm "Add ${partition} for ${description}"
 				git push -u origin "${branch}"
 			fi
-		done
+		fi
 	done
 
 	git add .
