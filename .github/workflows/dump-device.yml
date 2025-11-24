@@ -77,7 +77,7 @@ jobs:
       
       - name: Upload dump artifacts (if not pushed to GitHub)
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: device-dump
           path: out/
