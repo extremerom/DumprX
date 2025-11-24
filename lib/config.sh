@@ -49,9 +49,13 @@ function config_load() {
 	log_debug "Loading configuration from: ${found_config}"
 	
 	# Parse and load configuration
+	local valid_line_found=false
 	while IFS='=' read -r key value; do
 		# Skip empty lines and comments
 		[[ -z "${key}" ]] || [[ "${key}" =~ ^[[:space:]]*# ]] && continue
+		
+		# Mark that we found at least one valid line
+		valid_line_found=true
 		
 		# Trim whitespace
 		key=$(echo "${key}" | xargs)

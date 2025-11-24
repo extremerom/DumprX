@@ -350,8 +350,14 @@ function util_parse_config() {
 # Detect OS type
 function util_detect_os() {
 	if [[ -f /etc/os-release ]]; then
-		source /etc/os-release
-		echo "${ID}"
+		# Safely parse the ID field without sourcing the file
+		local os_id
+		os_id=$(grep '^ID=' /etc/os-release | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+		if [[ -n "${os_id}" ]]; then
+			echo "${os_id}"
+		else
+			echo "linux"
+		fi
 	elif [[ "${OSTYPE}" == "darwin"* ]]; then
 		echo "macos"
 	elif [[ "${OSTYPE}" == "linux-gnu"* ]]; then

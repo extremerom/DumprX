@@ -26,32 +26,32 @@ function download_direct() {
 	
 	# Prepare download command
 	local download_cmd
-	local download_args
+	local -a download_args
 	
 	if util_command_exists aria2c; then
 		log_debug "Using aria2c for download"
 		download_cmd="aria2c"
-		download_args="-x16 -s8 --console-log-level=warn --summary-interval=0 --check-certificate=false"
+		download_args=(-x16 -s8 --console-log-level=warn --summary-interval=0 --check-certificate=false)
 		if [[ -n "${filename}" ]]; then
-			download_args="${download_args} -o ${filename}"
+			download_args+=(-o "${filename}")
 		fi
-		download_args="${download_args} ${url}"
+		download_args+=("${url}")
 	elif util_command_exists wget; then
 		log_debug "Using wget for download"
 		download_cmd="wget"
-		download_args="-q --show-progress --progress=bar:force --no-check-certificate"
+		download_args=(-q --show-progress --progress=bar:force --no-check-certificate)
 		if [[ -n "${filename}" ]]; then
-			download_args="${download_args} -O ${filename}"
+			download_args+=(-O "${filename}")
 		fi
-		download_args="${download_args} ${url}"
+		download_args+=("${url}")
 	elif util_command_exists curl; then
 		log_debug "Using curl for download"
 		download_cmd="curl"
-		download_args="-L -O"
+		download_args=(-L -O)
 		if [[ -n "${filename}" ]]; then
-			download_args="-L -o ${filename}"
+			download_args=(-L -o "${filename}")
 		fi
-		download_args="${download_args} ${url}"
+		download_args+=("${url}")
 	else
 		log_error "No download tool available (aria2c, wget, or curl required)"
 		return 1
@@ -64,7 +64,7 @@ function download_direct() {
 	fi
 	
 	log_spinner_start "Downloading..."
-	if util_retry "${DUMPRX_MAX_RETRIES}" 5 ${download_cmd} ${download_args}; then
+	if util_retry "${DUMPRX_MAX_RETRIES}" 5 "${download_cmd}" "${download_args[@]}"; then
 		log_spinner_stop
 		log_success "Download completed successfully"
 		return 0

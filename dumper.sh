@@ -294,7 +294,16 @@ else
 			if [[ -w "${FILEPATH}" ]]; then
 				if util_command_exists detox; then
 					detox -r "${FILEPATH}" 2>/dev/null
-					FILEPATH=$(echo "${FILEPATH}" | inline-detox 2>/dev/null) || FILEPATH=$(util_realpath "${FIRMWARE_INPUT}")
+					# Try inline-detox if available, otherwise keep the detoxed path
+					if util_command_exists inline-detox; then
+						local detoxed_path
+						detoxed_path=$(echo "${FILEPATH}" | inline-detox 2>/dev/null)
+						if [[ -n "${detoxed_path}" ]] && [[ -e "${detoxed_path}" ]]; then
+							FILEPATH="${detoxed_path}"
+						fi
+					fi
+					# Re-resolve path after detox
+					FILEPATH=$(util_realpath "${FIRMWARE_INPUT}" 2>/dev/null) || FILEPATH="${FIRMWARE_INPUT}"
 				fi
 			fi
 		fi
