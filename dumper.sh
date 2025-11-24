@@ -1105,8 +1105,8 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.sin\|.*system_.*\.sin" 2>/
 	"${UNSIN}" -d "${TMPDIR}"
 	find "${TMPDIR}" -maxdepth 1 -type f -name "*.ext4" | while read -r i; do mv "${i}" "${i/.ext4/.img}" 2>/dev/null; done	# proper names
 	foundsuperinsin=$(find "${TMPDIR}" -maxdepth 1 -type f -name "super_*.img")
-	if [ ! -z $foundsuperinsin ]; then
-		mv $(ls ${TMPDIR}/super_*.img) "${TMPDIR}/super.img"
+	if [ ! -z "$foundsuperinsin" ]; then
+		mv "${TMPDIR}"/super_*.img "${TMPDIR}/super.img" 2>/dev/null
 		log_info "Super image detected inside sin file"
 		superimage_extract || exit 1
 	fi
@@ -1118,7 +1118,7 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".pac$" 2>/dev/null || [[ $(find "${T
 	pac_list=$(find . -type f -name "*.pac" | cut -d'/' -f'2-' | sort)
 	log_info "Extracting $(echo "${pac_list}" | wc -l) PAC file(s)..."
 	for file in ${pac_list}; do
-		python3 "${PACEXTRACTOR}" "${file}" $(pwd)
+		python3 "${PACEXTRACTOR}" "${file}" "$(pwd)"
 	done
 	if [[ -f super.img ]]; then
 		superimage_extract || exit 1
@@ -1179,11 +1179,13 @@ elif [[ $(${BIN_7ZZ} l -ba "$FILEPATH" | grep "super.img") ]]; then
 	log_step "Super image detected in archive"
 	foundsupers=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{ print $NF }' | grep "super.img")
 	${BIN_7ZZ} e -y "${FILEPATH}" $foundsupers dummypartition 2>/dev/null >> ${TMPDIR}/zip.log
-	superchunk=$(ls | grep chunk | grep super | sort)
-	if [[ $(echo "$superchunk" | grep "sparsechunk") ]]; then
+	# Use find instead of ls | grep
+	superchunk=$(find . -maxdepth 1 -type f -name "*super*chunk*" | sort)
+	if echo "$superchunk" | grep -q "sparsechunk"; then
 		log_info "Converting sparse super chunks..."
-		"${SIMG2IMG}" $(echo "$superchunk" | tr '\n' ' ') super.img.raw 2>/dev/null
-		rm -rf *super*chunk*
+		# shellcheck disable=SC2086
+		"${SIMG2IMG}" ${superchunk} super.img.raw 2>/dev/null
+		rm -rf ./*super*chunk*
 	fi
 	superimage_extract || exit 1
 elif [[ $(find "${TMPDIR}" -type f -name "super*.*img" | wc -l) -ge 1 ]]; then
@@ -1192,11 +1194,13 @@ elif [[ $(find "${TMPDIR}" -type f -name "super*.*img" | wc -l) -ge 1 ]]; then
 		foundsupers=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{print $NF}' | grep "super.*img")
 		${BIN_7ZZ} e -y -- "${FILEPATH}" "${foundsupers}" dummypartition 2>/dev/null >> "${TMPDIR}"/zip.log
 	fi
-	splitsupers=$(ls | grep -oP "super.[0-9].+.img")
-	if [[ ! -z "${splitsupers}" ]]; then
+	# Use find instead of ls | grep
+	splitsupers=$(find . -maxdepth 1 -type f -name "super.[0-9]*.img" | sort)
+	if [[ -n "${splitsupers}" ]]; then
 		log_info "Creating super.img from split files..."
+		# shellcheck disable=SC2086
 		"${SIMG2IMG}" ${splitsupers} super.img.raw 2>/dev/null
-		rm -rf -- ${splitsupers}
+		rm -rf ${splitsupers}
 	fi
 	superchunk=$(find . -maxdepth 1 -type f -name "*super*chunk*" | cut -d'/' -f'2-' | sort)
 	if echo "${superchunk}" | grep -q "sparsechunk"; then

@@ -84,9 +84,9 @@ else
 fi
 
 # Get boot.img info
-cp -f $1 $tempdir/
-cd $tempdir
-bootimg="$(basename $1)"
+cp -f "$1" "$tempdir/"
+cd "$tempdir" || exit
+bootimg="$(basename "$1")"
 offset=$(grep -abo "ANDROID!\|VNDRBOOT" $bootimg | cut -f 1 -d :)
 [ -z $offset ] && exit
 if [ $offset -gt 0 ]; then
@@ -219,11 +219,10 @@ if [ $dtbo_size -gt 0 ]; then
     dd if=$bootimg of=dtbo.img_tmp bs=$page_size skip=$do_offset count=$do_count 2>/dev/null
     dd if=dtbo.img_tmp of=dtbo.img bs=$dtbo_size count=1 2>/dev/null
     dtbo="$tempdir/dtbo.img"
-    dtbo=$(basename $dtbo)
+    dtbo=$(basename "$dtbo")
     do_name="dtbo=$dtbo\n"
 fi
-rm -f *_tmp $(basename $1) $bootimg
-
+rm -f ./*_tmp "${bootimg}"
 kernel=kernel
 ramdisk=ramdisk
 [ "$VNDRBOOT" == "false" ] && [ ! -s $kernel ] && exit
@@ -286,7 +285,7 @@ if [ $ramdisk_packed_header = $mtk_header_magic ]; then
     rm -f ramdisk.packed.mtk
 fi
 
-mkdir ramdisk && cd ramdisk
+mkdir ramdisk && cd ramdisk || exit
 
 if gzip -t ../ramdisk.packed 2>/dev/null; then
     psuccess "ramdisk is gzip format."
@@ -341,7 +340,7 @@ if cpio -i -d -m --no-absolute-filenames < ../ramdisk.packed 2>/dev/null; then
     unpack_complete
 fi
 # If ramdisk.packed is empty or very small, it might be intentionally empty
-if [ ! -s ../ramdisk.packed ] || [ $(stat -c%s ../ramdisk.packed) -lt 100 ]; then
+if [ ! -s ../ramdisk.packed ] || [ "$(stat -c%s ../ramdisk.packed)" -lt 100 ]; then
     psuccess "ramdisk is empty (vendor_boot or init_boot may not have ramdisk)."
     format=empty
     unpack_complete
