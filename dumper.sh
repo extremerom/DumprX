@@ -1205,14 +1205,14 @@ commit_and_push(){
 	done
 
 	# Split large directories into three parts to avoid HTTP 500 errors with large files
-	# system_ext directory (excluding nested system_* dirs)
-	split_and_push_directory "system_ext" "system_ext" '^system_(dlkm)$'
-	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" '^system_(dlkm)$'
+	# system_ext directory (no need to exclude system_* subdirs as they shouldn't exist here)
+	split_and_push_directory "system_ext" "system_ext" ''
+	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" ''
 	
 	# vendor directory
 	split_and_push_directory "vendor" "vendor" ''
 	
-	# system directory (excluding nested system_* dirs already handled)
+	# system directory (excluding nested system_ext and system_dlkm already handled above)
 	split_and_push_directory "system" "system" '^system_(ext|dlkm)$'
 
 	git add .
