@@ -227,8 +227,15 @@ function git_commit_chunks() {
 function git_push_with_retry() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3:-main}"
+	local branch="${3}"  # No default - branch must be specified
 	local max_retries="${4:-10}"
+	
+	# Validate branch parameter
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_push_with_retry"
+		log_error "Usage: git_push_with_retry <repo_dir> <remote> <branch> [max_retries]"
+		return 1
+	fi
 	
 	log_step "Pushing to ${remote}/${branch}"
 	
@@ -336,7 +343,13 @@ function git_push_with_retry() {
 function git_push_shallow() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3:-main}"
+	local branch="${3}"  # No default - branch must be specified
+	
+	# Validate branch parameter
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_push_shallow"
+		return 1
+	fi
 	
 	log_step "Attempting shallow push"
 	
@@ -359,8 +372,14 @@ function git_push_shallow() {
 function git_push_batches() {
 	local repo_dir="${1:-.}"
 	local remote="${2:-origin}"
-	local branch="${3:-main}"
+	local branch="${3}"  # No default - branch must be specified
 	local commits_per_batch="${4:-10}"
+	
+	# Validate branch parameter
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_push_batches"
+		return 1
+	fi
 	
 	log_step "Pushing commits in batches"
 	
@@ -413,10 +432,18 @@ function git_push_batches() {
 function git_upload_dump() {
 	local repo_dir="$1"
 	local remote_url="$2"
-	local branch="${3:-main}"
+	local branch="$3"  # No default - branch must be specified
 	local use_lfs="${4:-true}"
 	
+	# Validate required parameters
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is required for git_upload_dump"
+		log_error "Usage: git_upload_dump <repo_dir> <remote_url> <branch> [use_lfs]"
+		return 1
+	fi
+	
 	log_header "Uploading Firmware Dump to GitHub"
+	log_info "Target branch: ${branch}"
 	
 	cd "${repo_dir}" || {
 		log_fatal "Cannot access repository directory: ${repo_dir}"

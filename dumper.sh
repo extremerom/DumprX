@@ -2022,7 +2022,32 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	git config http.retries 10
 	git config core.bigFileThreshold 50m
 	
-	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
+	# Validate branch name before checkout
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is empty! Using incremental as fallback"
+		branch="${incremental}"
+	fi
+	
+	if [[ -z "${branch}" ]]; then
+		log_fatal "Cannot determine branch name - both description and incremental are empty"
+		exit 1
+	fi
+	
+	log_info "Creating git branch: ${branch}"
+	git checkout -b "${branch}" || { 
+		log_warn "Failed to create branch '${branch}', trying incremental '${incremental}'"
+		git checkout -b "${incremental}" && export branch="${incremental}"
+	}
+	
+	# Verify we're on the correct branch
+	current_branch=$(git rev-parse --abbrev-ref HEAD)
+	if [[ "${current_branch}" != "${branch}" ]]; then
+		log_warn "Current branch '${current_branch}' differs from expected '${branch}'"
+		branch="${current_branch}"
+	fi
+	
+	log_success "Git branch created: ${branch}"
+	
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
 	
@@ -2038,6 +2063,7 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	log_header "Pushing Firmware to GitHub"
 	log_info "Repository: https://github.com/${GIT_ORG}/${repo}.git"
 	log_info "Branch: ${branch}"
+	log_info "Description: ${description}"
 	sleep 1
 	git remote add origin https://${GITHUB_TOKEN}@github.com/${GIT_ORG}/${repo}.git
 	commit_and_push
@@ -2100,7 +2126,33 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	git config pack.windowMemory 256m			# Reduce memory usage during pack
 	git config pack.packSizeLimit 256m		# Limit pack file size
 	git config core.compression 0				# Disable compression for speed
-	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
+	
+	# Validate branch name before checkout
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is empty! Using incremental as fallback"
+		branch="${incremental}"
+	fi
+	
+	if [[ -z "${branch}" ]]; then
+		log_fatal "Cannot determine branch name - both description and incremental are empty"
+		exit 1
+	fi
+	
+	log_info "Creating git branch: ${branch}"
+	git checkout -b "${branch}" || { 
+		log_warn "Failed to create branch '${branch}', trying incremental '${incremental}'"
+		git checkout -b "${incremental}" && export branch="${incremental}"
+	}
+	
+	# Verify we're on the correct branch
+	current_branch=$(git rev-parse --abbrev-ref HEAD)
+	if [[ "${current_branch}" != "${branch}" ]]; then
+		log_warn "Current branch '${current_branch}' differs from expected '${branch}'"
+		branch="${current_branch}"
+	fi
+	
+	log_success "Git branch created: ${branch}"
+	
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
 	[[ -z "$(git config --get user.email)" ]] && git config user.email "guptasushrut@gmail.com"
