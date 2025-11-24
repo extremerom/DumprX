@@ -1117,7 +1117,7 @@ git_push_with_retry() {
 	
 	while [ $attempt -le $max_attempts ]; do
 		echo "Attempting to push (attempt $attempt/$max_attempts)..."
-		if git push -u origin "${branch}" 2>&1; then
+		if git push -u origin "${branch}"; then
 			echo "Push successful!"
 			return 0
 		else
@@ -1250,7 +1250,11 @@ commit_and_push(){
 	}
 
 	# Split APK files into smaller batches to avoid large commits
-	local apk_files=($(find -type f -name '*.apk' 2>/dev/null))
+	local apk_files=()
+	while IFS= read -r -d '' file; do
+		apk_files+=("$file")
+	done < <(find . -type f -name '*.apk' -print0 2>/dev/null)
+	
 	local apk_count=${#apk_files[@]}
 	if [ $apk_count -gt 0 ]; then
 		echo "Found $apk_count APK files, splitting into batches..."
@@ -1340,7 +1344,11 @@ commit_and_push(){
 
 	# Split remaining files into smaller chunks instead of one large commit
 	echo "Adding remaining files in smaller batches..."
-	local remaining_files=($(git ls-files --others --exclude-standard 2>/dev/null))
+	local remaining_files=()
+	while IFS= read -r file; do
+		remaining_files+=("$file")
+	done < <(git ls-files --others --exclude-standard 2>/dev/null)
+	
 	local remaining_count=${#remaining_files[@]}
 	
 	if [ $remaining_count -gt 0 ]; then
@@ -1363,13 +1371,30 @@ commit_and_push(){
 		done
 	fi
 	
-	# Final check for any remaining unstaged files
-	if [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then
-		git add .
-		if ! git diff --cached --quiet; then
-			git commit -sm "Add final extras for ${description}"
-			git_push_with_retry || return 1
-		fi
+	# Final check for any remaining unstaged files - use batching to avoid large commits
+	local final_files=()
+	while IFS= read -r file; do
+		final_files+=("$file")
+	done < <(git ls-files --others --exclude-standard 2>/dev/null)
+	
+	if [ ${#final_files[@]} -gt 0 ]; then
+		echo "Found ${#final_files[@]} final unstaged files, adding in batches..."
+		local final_batch_size=50
+		local final_batch_num=1
+		local total_final_batches=$(( (${#final_files[@]} + final_batch_size - 1) / final_batch_size ))
+		
+		for ((i=0; i<${#final_files[@]}; i+=final_batch_size)); do
+			local final_batch=("${final_files[@]:i:final_batch_size}")
+			if [ ${#final_batch[@]} -gt 0 ]; then
+				echo "Adding final batch $final_batch_num/$total_final_batches (${#final_batch[@]} files)..."
+				git add "${final_batch[@]}" 2>/dev/null
+				if ! git diff --cached --quiet; then
+					git commit -sm "Add final extras batch $final_batch_num/$total_final_batches for ${description}"
+					git_push_with_retry || return 1
+				fi
+				final_batch_num=$((final_batch_num + 1))
+			fi
+		done
 	fi
 }
 
@@ -1410,12 +1435,12 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	printf "\n\nStarting Git Init...\n"
 	git init		# Insure Your Github Authorization Before Running This Script
 	# Configure git for better handling of large repositories and network issues
-	git config --global http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
-	git config --global http.lowSpeedLimit 0			# Disable low speed limit
-	git config --global http.lowSpeedTime 999999		# Increase timeout
-	git config --global pack.windowMemory 256m			# Reduce memory usage during pack
-	git config --global pack.packSizeLimit 256m		# Limit pack file size
-	git config --global core.compression 0				# Disable compression for speed
+	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	git config http.lowSpeedLimit 0			# Disable low speed limit
+	git config http.lowSpeedTime 999999		# Increase timeout
+	git config pack.windowMemory 256m			# Reduce memory usage during pack
+	git config pack.packSizeLimit 256m		# Limit pack file size
+	git config core.compression 0				# Disable compression for speed
 	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
@@ -1484,12 +1509,12 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 
 	git init		# Insure Your GitLab Authorization Before Running This Script
 	# Configure git for better handling of large repositories and network issues
-	git config --global http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
-	git config --global http.lowSpeedLimit 0			# Disable low speed limit
-	git config --global http.lowSpeedTime 999999		# Increase timeout
-	git config --global pack.windowMemory 256m			# Reduce memory usage during pack
-	git config --global pack.packSizeLimit 256m		# Limit pack file size
-	git config --global core.compression 0				# Disable compression for speed
+	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
+	git config http.lowSpeedLimit 0			# Disable low speed limit
+	git config http.lowSpeedTime 999999		# Increase timeout
+	git config pack.windowMemory 256m			# Reduce memory usage during pack
+	git config pack.packSizeLimit 256m		# Limit pack file size
+	git config core.compression 0				# Disable compression for speed
 	git checkout -b "${branch}" || { git checkout -b "${incremental}" && export branch="${incremental}"; }
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore

@@ -49,8 +49,15 @@ If you still encounter errors after these fixes:
 
 ### 1. Check Your Network Connection
 ```bash
-# Test your upload speed
-curl -o /dev/null http://speedtest.tele2.net/100MB.zip
+# Test your upload speed (multiple options)
+# Option 1: Using speedtest-cli (install with: pip install speedtest-cli)
+speedtest-cli
+
+# Option 2: Using fast.com (requires curl)
+curl -s https://fast.com | grep -o '[0-9]\+ Mbps'
+
+# Option 3: Check network stability
+ping -c 10 github.com
 ```
 
 ### 2. Reduce Batch Sizes
