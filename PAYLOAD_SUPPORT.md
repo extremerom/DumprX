@@ -129,6 +129,59 @@ Extracts specific partitions only.
 extract_payload_partitions payload.bin output_dir /path/to/payload-dumper-go "system,vendor,boot"
 ```
 
+#### verify_payload_checksums
+Placeholder for checksum verification (performed automatically by payload-dumper-go).
+```bash
+verify_payload_checksums payload.bin
+```
+
+## Advanced Payload Functions (payload_advanced.sh)
+
+For power users, additional advanced functions are available in `utils/payload_advanced.sh`:
+
+### verify_partition_checksum
+Verify SHA256 checksum of an extracted partition.
+```bash
+source utils/payload_advanced.sh
+verify_partition_checksum system.img <expected_sha256>
+```
+
+### estimate_extraction_time
+Estimate how long extraction will take based on file size and workers.
+```bash
+estimate_extraction_time payload.bin 8
+# Output: 5m
+```
+
+### check_disk_space
+Check if sufficient disk space is available before extraction.
+```bash
+check_disk_space /output/directory payload.bin
+# Required space: ~7GB
+# Available space: 50GB
+# ✓ Sufficient disk space available
+```
+
+### extract_with_progress
+Extract with detailed progress information and timing.
+```bash
+extract_with_progress payload.bin output_dir /path/to/payload-dumper-go 8
+```
+
+### extract_with_retry
+Extract with automatic retry on failure (reduces workers on retry).
+```bash
+extract_with_retry payload.bin output_dir /path/to/payload-dumper-go 8 2
+# Attempts extraction up to 2 times with adjusted settings
+```
+
+### create_extraction_report
+Generate a detailed report of extracted partitions with checksums.
+```bash
+create_extraction_report output_dir payload.bin
+# Creates: output_dir/extraction_report.txt
+```
+
 ## Integration with dumper.sh
 
 The main dumper.sh script now automatically:
@@ -137,8 +190,9 @@ The main dumper.sh script now automatically:
 2. **Validates** the header version (v2, v3, v4)
 3. **Displays** version information and compatibility
 4. **Lists** available partitions before extraction
-5. **Extracts** with enhanced error handling
-6. **Falls back** to basic extraction if validation fails
+5. **Extracts** with enhanced error handling and retry capability
+6. **Generates** extraction reports with checksums
+7. **Falls back** to basic extraction if validation fails
 
 ### Example Flow
 
@@ -160,11 +214,38 @@ system_ext
 vendor
 vendor_boot
 
-Starting payload extraction with 8 workers...
-Detected payload.bin with header v4
-Android S+ (Virtual A/B, snapshot-based updates)
-Extracting payload with 8 concurrent workers...
-Payload extraction completed successfully
+Using enhanced extraction with retry capability...
+=========================================
+Payload Extraction Summary
+=========================================
+File: payload.bin
+Size: 2.5G
+Output: /path/to/output
+Workers: 8
+Estimated time: 5m
+=========================================
+
+Required space: ~7GB
+Available space: 50GB
+✓ Sufficient disk space available
+
+Starting extraction...
+
+=========================================
+✓ Extraction completed successfully
+Time elapsed: 287s
+=========================================
+
+Extracted partitions:
+  boot.img (64M)
+  dtbo.img (8.0M)
+  product.img (1.2G)
+  system.img (2.8G)
+  system_ext.img (456M)
+  vendor.img (789M)
+  vendor_boot.img (32M)
+
+Extraction report saved to: /path/to/output/extraction_report.txt
 ```
 
 ## Technical Details

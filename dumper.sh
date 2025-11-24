@@ -143,6 +143,11 @@ if [[ -f "${UTILSDIR}"/payload_functions.sh ]]; then
 	source "${UTILSDIR}"/payload_functions.sh
 fi
 
+# Source advanced payload functions (optional)
+if [[ -f "${UTILSDIR}"/payload_advanced.sh ]]; then
+	source "${UTILSDIR}"/payload_advanced.sh
+fi
+
 # Partition List That Are Currently Supported
 PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory product xrom modem dtbo dtb boot vendor_boot recovery tz oppo_product preload_common opproduct reserve india my_preload my_odm my_stock my_operator my_country my_product my_company my_engineering my_heytap my_custom my_manifest my_carrier my_region my_bigball my_version special_preload system_dlkm vendor_dlkm odm_dlkm init_boot vendor_kernel_boot odmko socko nt_log mi_ext hw_product product_h preas preavs optics omr prism persist"
 EXT4PARTITIONS="system vendor cust odm oem factory product xrom systemex oppo_product preload_common hw_product product_h preas preavs optics omr prism persist"
@@ -682,10 +687,22 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q payload.bin 2>/dev/null || [[ $(fi
 				list_payload_partitions "${PAYLOAD_FILE}" "${PAYLOAD_EXTRACTOR}" || true
 				printf "\n"
 				
-				# Extract with enhanced error handling
-				printf "Starting payload extraction with $(nproc --all) workers...\n"
-				extract_payload_safe "${PAYLOAD_FILE}" "${TMPDIR}" "${PAYLOAD_EXTRACTOR}" "$(nproc --all)"
-				EXTRACT_RET=$?
+				# Use advanced extraction if available, otherwise use standard
+				if command -v extract_with_retry >/dev/null 2>&1; then
+					printf "Using enhanced extraction with retry capability...\n"
+					extract_with_retry "${PAYLOAD_FILE}" "${TMPDIR}" "${PAYLOAD_EXTRACTOR}" "$(nproc --all)" 2
+					EXTRACT_RET=$?
+					
+					# Create extraction report if successful
+					if [[ $EXTRACT_RET -eq 0 ]] && command -v create_extraction_report >/dev/null 2>&1; then
+						create_extraction_report "${TMPDIR}" "${PAYLOAD_FILE}"
+					fi
+				else
+					# Standard extraction
+					printf "Starting payload extraction with $(nproc --all) workers...\n"
+					extract_payload_safe "${PAYLOAD_FILE}" "${TMPDIR}" "${PAYLOAD_EXTRACTOR}" "$(nproc --all)"
+					EXTRACT_RET=$?
+				fi
 				
 				if [[ $EXTRACT_RET -ne 0 ]]; then
 					printf "\e[31mERROR: Payload extraction failed (exit code: $EXTRACT_RET)\e[0m\n"
