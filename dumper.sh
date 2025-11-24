@@ -139,8 +139,8 @@ AFHDL="${UTILSDIR}"/downloaders/afh_dl.py
 FSCK_EROFS=${UTILSDIR}/bin/fsck.erofs
 
 # Partition List That Are Currently Supported
-PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory product xrom modem dtbo dtb boot vendor_boot recovery tz oppo_product preload_common opproduct reserve india my_preload my_odm my_stock my_operator my_country my_product my_company my_engineering my_heytap my_custom my_manifest my_carrier my_region my_bigball my_version special_preload system_dlkm vendor_dlkm odm_dlkm init_boot vendor_kernel_boot odmko socko nt_log mi_ext hw_product product_h preas preavs"
-EXT4PARTITIONS="system vendor cust odm oem factory product xrom systemex oppo_product preload_common hw_product product_h preas preavs"
+PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory product xrom modem dtbo dtb boot vendor_boot recovery tz oppo_product preload_common opproduct reserve india my_preload my_odm my_stock my_operator my_country my_product my_company my_engineering my_heytap my_custom my_manifest my_carrier my_region my_bigball my_version special_preload system_dlkm vendor_dlkm odm_dlkm init_boot vendor_kernel_boot odmko socko nt_log mi_ext hw_product product_h preas preavs optics omr prism persist"
+EXT4PARTITIONS="system vendor cust odm oem factory product xrom systemex oppo_product preload_common hw_product product_h preas preavs optics omr prism persist"
 OTHERPARTITIONS="tz.mbn:tz tz.img:tz modem.img:modem NON-HLOS:modem boot-verified.img:boot recovery-verified.img:recovery dtbo-verified.img:dtbo"
 
 # NOTE: $(pwd) is ${PROJECT_DIR}
@@ -855,7 +855,7 @@ done
 
 # Remove Unnecessary Image Leftover From OUTDIR
 for q in *.img; do
-	if ! echo "${q}" | grep -q "boot\|recovery\|dtbo\|tz"; then
+	if ! echo "${q}" | grep -q "boot\|recovery\|dtbo\|tz\|optics\|omr\|prism\|persist"; then
 		rm -f "${q}" 2>/dev/null
 	fi
 done
@@ -1109,16 +1109,77 @@ find "$OUTDIR" -type f -printf '%P\n' | sort | grep -v ".git/" > "$OUTDIR"/all_f
 
 rm -rf "${TMPDIR}" 2>/dev/null
 
+# Helper function to split a large directory into three parts
+split_and_push_directory() {
+	local dir_name="$1"
+	local dir_path="$2"
+	local exclude_pattern="$3"
+	
+	if [ ! -d "$dir_path" ]; then
+		return 0
+	fi
+	
+	# Get all subdirectories in the directory
+	local SUBDIRS=()
+	while IFS= read -r -d '' subdir; do
+		local dirname=$(basename "$subdir")
+		# Skip excluded patterns if provided
+		if [ -n "$exclude_pattern" ] && [[ "$dirname" =~ $exclude_pattern ]]; then
+			continue
+		fi
+		SUBDIRS+=("$dirname")
+	done < <(find "$dir_path" -maxdepth 1 -type d -not -path "$dir_path" -print0 2>/dev/null | sort -z)
+	
+	# Calculate how many subdirs per part (ceiling division to split into 3 parts)
+	local total=${#SUBDIRS[@]}
+	local part_size=$(( (total + 2) / 3 ))  # Ceiling division by 3: (n+2)/3
+	
+	# Push subdirectories in three parts
+	for part in 1 2 3; do
+		local start_idx=$(( (part - 1) * part_size ))
+		local end_idx=$(( part * part_size ))
+		
+		# Add subdirectories for this part
+		local has_content=false
+		for (( idx=$start_idx; idx<$end_idx && idx<$total; idx++ )); do
+			local subdir="${SUBDIRS[$idx]}"
+			if [ -d "$dir_path/$subdir" ]; then
+				git add "$dir_path/$subdir"
+				has_content=true
+			fi
+		done
+		
+		# Also handle root-level files for the first part
+		if [ $part -eq 1 ]; then
+			# Check if there are any root-level files
+			if [ -n "$(find "$dir_path" -maxdepth 1 -type f 2>/dev/null)" ]; then
+				find "$dir_path" -maxdepth 1 -type f -exec git add {} \; 2>/dev/null
+				has_content=true
+			fi
+		fi
+		
+		# Commit and push this part if there's content
+		if [ "$has_content" = true ]; then
+			# Only commit if there are staged changes (git diff returns non-zero when changes exist)
+			if ! git diff --cached --quiet; then
+				git commit -sm "Add ${dir_name} part ${part}/3 for ${description}"
+				git push -u origin "${branch}"
+			fi
+		fi
+	done
+}
+
 commit_and_push(){
 	local DIRS=(
-		"system_ext"
 		"product"
 		"system_dlkm"
 		"odm"
 		"odm_dlkm"
 		"vendor_dlkm"
-		"vendor"
-		"system"
+		"optics"
+		"omr"
+		"prism"
+		"persist"
 	)
 
 	git lfs install
@@ -1142,6 +1203,17 @@ commit_and_push(){
 		git commit -sm "Add ${i} for ${description}"
 		git push -u origin "${branch}"
 	done
+
+	# Split large directories into three parts to avoid HTTP 500 errors with large files
+	# system_ext directory (no need to exclude system_* subdirs as they shouldn't exist here)
+	split_and_push_directory "system_ext" "system_ext" ''
+	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" ''
+	
+	# vendor directory
+	split_and_push_directory "vendor" "vendor" ''
+	
+	# system directory (excluding nested system_ext and system_dlkm already handled above)
+	split_and_push_directory "system" "system" '^system_(ext|dlkm)$'
 
 	git add .
 	git commit -sm "Add extras for ${description}"
