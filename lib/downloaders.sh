@@ -63,15 +63,116 @@ function download_direct() {
 		return 0
 	fi
 	
-	log_spinner_start "Downloading..."
-	if util_retry "${DUMPRX_MAX_RETRIES}" 5 "${download_cmd}" "${download_args[@]}"; then
-		log_spinner_stop
-		log_success "Download completed successfully"
-		return 0
+	# Use improved output parsing for aria2c
+	if [[ "${download_cmd}" == "aria2c" ]]; then
+		local attempt=1
+		local max_attempts="${DUMPRX_MAX_RETRIES:-3}"
+		local delay=5
+		local download_success=false
+		
+		while [[ ${attempt} -le ${max_attempts} ]]; do
+			log_debug "Download attempt ${attempt}/${max_attempts}"
+			
+			local last_progress=""
+			local download_result=0
+			
+			# Run aria2c and parse output in real-time
+			"${download_cmd}" "${download_args[@]}" 2>&1 | while IFS= read -r line; do
+				# Filter out aria2c summary lines that start with [#
+				if [[ "${line}" =~ ^\[#[0-9a-f]+ ]]; then
+					# Extract key information from progress line
+					# Format: [#gid SIZE/TOTAL(%) CN:X DL:SPEED ETA:TIME]
+					local progress_info="${line}"
+					
+					# Only print progress updates every few lines to reduce clutter
+					# Extract percentage if available
+					if [[ "${progress_info}" =~ \(([0-9]+)%\) ]]; then
+						local percent="${BASH_REMATCH[1]}"
+						# Only update every 5%
+						if [[ -z "${last_progress}" ]] || [[ $((percent - last_progress)) -ge 5 ]] || [[ "${percent}" == "100" ]]; then
+							# Extract useful info: downloaded/total, percentage, speed, ETA
+							if [[ "${progress_info}" =~ ([0-9.]+[KMGT]?i?B)/([0-9.]+[KMGT]?i?B)\(([0-9]+)%\).*DL:([0-9.]+[KMGT]?i?B).*ETA:([0-9hms]+) ]]; then
+								local downloaded="${BASH_REMATCH[1]}"
+								local total="${BASH_REMATCH[2]}"
+								local speed="${BASH_REMATCH[4]}"
+								local eta="${BASH_REMATCH[5]}"
+								
+								if [[ "${DUMPRX_LOG_COLORS}" == "true" ]]; then
+									printf "\r${LOG_COLOR_CYAN}📥 Progress:${LOG_COLOR_RESET} ${LOG_COLOR_GREEN}%s${LOG_COLOR_RESET}/%s (${LOG_COLOR_BOLD}%s%%${LOG_COLOR_RESET}) ${LOG_COLOR_BLUE}⚡ %s/s${LOG_COLOR_RESET} ${LOG_COLOR_YELLOW}⏱ ETA: %s${LOG_COLOR_RESET}" \
+										"${downloaded}" "${total}" "${percent}" "${speed}" "${eta}"
+								else
+									printf "\r📥 Progress: %s/%s (%s%%) ⚡ %s/s ⏱ ETA: %s" \
+										"${downloaded}" "${total}" "${percent}" "${speed}" "${eta}"
+								fi
+							elif [[ "${progress_info}" =~ ([0-9.]+[KMGT]?i?B)/([0-9.]+[KMGT]?i?B)\(([0-9]+)%\).*DL:([0-9.]+[KMGT]?i?B) ]]; then
+								# No ETA available (near completion)
+								local downloaded="${BASH_REMATCH[1]}"
+								local total="${BASH_REMATCH[2]}"
+								local speed="${BASH_REMATCH[4]}"
+								
+								if [[ "${DUMPRX_LOG_COLORS}" == "true" ]]; then
+									printf "\r${LOG_COLOR_CYAN}📥 Progress:${LOG_COLOR_RESET} ${LOG_COLOR_GREEN}%s${LOG_COLOR_RESET}/%s (${LOG_COLOR_BOLD}%s%%${LOG_COLOR_RESET}) ${LOG_COLOR_BLUE}⚡ %s/s${LOG_COLOR_RESET}" \
+										"${downloaded}" "${total}" "${percent}" "${speed}"
+								else
+									printf "\r📥 Progress: %s/%s (%s%%) ⚡ %s/s" \
+										"${downloaded}" "${total}" "${percent}" "${speed}"
+								fi
+							fi
+							last_progress="${percent}"
+						fi
+					fi
+				elif [[ "${line}" =~ ^Download\ Results: ]] || [[ "${line}" =~ ^gid ]] || [[ "${line}" =~ ^===== ]] || [[ "${line}" =~ ^Status\ Legend: ]] || [[ "${line}" =~ ^\(OK\): ]]; then
+					# Skip these summary header lines
+					continue
+				elif [[ "${line}" =~ ^[0-9a-f]+\|OK ]]; then
+					# Download completed successfully
+					printf "\n"
+				else
+					# For any other output (errors, warnings), pass through
+					if [[ -n "${line}" ]] && [[ ! "${line}" =~ ^[[:space:]]*$ ]]; then
+						printf "\n%s\n" "${line}"
+					fi
+				fi
+			done
+			
+			download_result=${PIPESTATUS[0]}
+			
+			# Clear the progress line
+			printf "\r%*s\r" 100 ""
+			
+			if [[ ${download_result} -eq 0 ]]; then
+				download_success=true
+				break
+			else
+				if [[ ${attempt} -lt ${max_attempts} ]]; then
+					log_warn "Download failed, retrying in ${delay}s..."
+					sleep "${delay}"
+					delay=$((delay * 2))  # Exponential backoff
+				fi
+			fi
+			
+			attempt=$((attempt + 1))
+		done
+		
+		if ${download_success}; then
+			log_success "Download completed successfully"
+			return 0
+		else
+			log_error "Download failed after ${max_attempts} attempts"
+			return 1
+		fi
 	else
-		log_spinner_stop
-		log_error "Download failed after ${DUMPRX_MAX_RETRIES} attempts"
-		return 1
+		# For wget and curl, use the spinner as before
+		log_spinner_start "Downloading..."
+		if util_retry "${DUMPRX_MAX_RETRIES}" 5 "${download_cmd}" "${download_args[@]}"; then
+			log_spinner_stop
+			log_success "Download completed successfully"
+			return 0
+		else
+			log_spinner_stop
+			log_error "Download failed after ${DUMPRX_MAX_RETRIES} attempts"
+			return 1
+		fi
 	fi
 }
 
