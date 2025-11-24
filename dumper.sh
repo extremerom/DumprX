@@ -371,8 +371,8 @@ function superimage_extract() {
 		if [ -f "$partition"_a.img ]; then
 			mv "$partition"_a.img "$partition".img
 		else
-			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep $partition.img)
-			${BIN_7ZZ} e -y "${FILEPATH}" $foundpartitions dummypartition 2>/dev/null >> $TMPDIR/zip.log
+			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep "$partition".img)
+			${BIN_7ZZ} e -y "${FILEPATH}" "$foundpartitions" dummypartition 2>/dev/null >> "$TMPDIR"/zip.log
 		fi
 	done
 	rm -rf super.img.raw
@@ -812,23 +812,23 @@ if echo "${FILEPATH}" | grep -i "^ruu_" | grep -q -i "exe$" || [[ "${EXTENSION}"
 fi
 
 # Amlogic upgrade package (AML) Check
-if [[ $(${BIN_7ZZ} l -ba "${FILEPATH}" | grep -i aml) ]]; then
+if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -qi aml; then
 	log_step "Amlogic upgrade package detected"
-	cp "${FILEPATH}" ${TMPDIR}
-	FILE="${TMPDIR}/$(basename ${FILEPATH})"
+	cp "${FILEPATH}" "${TMPDIR}"
+	FILE="${TMPDIR}/$(basename "${FILEPATH}")"
 	log_info "Extracting AML package..."
-	${BIN_7ZZ} e -y "${FILEPATH}" >> ${TMPDIR}/zip.log
-	"${AML_EXTRACT}" $(find . -type f -name "*aml*.img")
-	rename 's/.PARTITION$/.img/' *.PARTITION
-	rename 's/_aml_dtb.img$/dtb.img/' *.img
-	rename 's/_a.img/.img/' *.img
+	${BIN_7ZZ} e -y "${FILEPATH}" >> "${TMPDIR}"/zip.log
+	"${AML_EXTRACT}" "$(find . -type f -name "*aml*.img")"
+	rename 's/.PARTITION$/.img/' ./*.PARTITION
+	rename 's/_aml_dtb.img$/dtb.img/' ./*.img
+	rename 's/_a.img/.img/' ./*.img
 	if [[ -f super.img ]]; then
 		superimage_extract || exit 1
 	fi
 	for partition in $PARTITIONS; do
 		[[ -e "${TMPDIR}/${partition}.img" ]] && mv "${TMPDIR}/${partition}.img" "${OUTDIR}/${partition}.img"
 	done
-	rm -rf ${TMPDIR}
+	rm -rf "${TMPDIR}"
 	log_success "AML package extraction completed"
 fi
 
@@ -855,8 +855,8 @@ fi
 if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "system.new.dat*" -print | wc -l) -ge 1 ]]; then
 	log_step "A-only DAT-formatted OTA detected"
 	for partition in $PARTITIONS; do
-		${BIN_7ZZ} e -y "${FILEPATH}" ${partition}.new.dat* ${partition}.transfer.list ${partition}.img 2>/dev/null >> ${TMPDIR}/zip.log
-		${BIN_7ZZ} e -y "${FILEPATH}" ${partition}.*.new.dat* ${partition}.*.transfer.list ${partition}.*.img 2>/dev/null >> ${TMPDIR}/zip.log
+		${BIN_7ZZ} e -y "${FILEPATH}" "${partition}".new.dat* "${partition}".transfer.list "${partition}".img 2>/dev/null >> "${TMPDIR}"/zip.log
+		${BIN_7ZZ} e -y "${FILEPATH}" "${partition}".*".new.dat*" "${partition}".*".transfer.list" "${partition}".*".img" 2>/dev/null >> "${TMPDIR}"/zip.log
 		rename 's/(\w+)\.(\d+)\.(\w+)/$1.$3/' *
 		# For Oplus A-only OTAs, eg OnePlus Nord 2. Regex matches the 8 digits of Oplus NV ID (prop ro.build.oplus_nv_id) to remove them.
 		# hello@world:~/test_regex# rename -n 's/(\w+)\.(\d+)\.(\w+)/$1.$3/' *
@@ -864,8 +864,8 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 		# rename(my_bigball.00011011.patch.dat, my_bigball.patch.dat)
 		# rename(my_bigball.00011011.transfer.list, my_bigball.transfer.list)
 		if [[ -f ${partition}.new.dat.1 ]]; then
-			cat ${partition}.new.dat.{0..999} 2>/dev/null >> ${partition}.new.dat
-			rm -rf ${partition}.new.dat.{0..999}
+			cat "${partition}".new.dat.{0..999} 2>/dev/null >> "${partition}".new.dat
+			rm -rf "${partition}".new.dat.{0..999}
 		fi
 		dat_files=()
 		while IFS= read -r -d '' file; do
@@ -875,7 +875,7 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 		for i in "${dat_files[@]}"; do
 			line=$(basename "$i" | cut -d"." -f1)
 			if [[ "$i" =~ \.dat\.xz$ ]]; then
-				${BIN_7ZZ} e -y "$i" 2>/dev/null >> ${TMPDIR}/zip.log
+				${BIN_7ZZ} e -y "$i" 2>/dev/null >> "${TMPDIR}"/zip.log
 				rm -rf "$i"
 			fi
 			if [[ "$i" =~ \.dat\.br$ ]]; then
@@ -885,27 +885,27 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 			fi
 			if [[ "$i" =~ \.new\.dat$ ]]; then
 				log_debug "Extracting ${line} partition"
-				python3 ${SDAT2IMG} ${line}.transfer.list ${line}.new.dat "${OUTDIR}"/${line}.img > ${TMPDIR}/extract.log
-				rm -rf ${line}.transfer.list ${line}.new.dat
+				python3 "${SDAT2IMG}" "${line}".transfer.list "${line}".new.dat "${OUTDIR}"/"${line}".img > "${TMPDIR}"/extract.log
+				rm -rf "${line}".transfer.list "${line}".new.dat
 			fi
 		done
 	done
 	log_success "DAT extraction completed"
-elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep rawprogram || [[ $(find "${TMPDIR}" -type f -name "*rawprogram*" | wc -l) -ge 1 ]]; then
+elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q rawprogram || [[ $(find "${TMPDIR}" -type f -name "*rawprogram*" | wc -l) -ge 1 ]]; then
 	log_step "QFIL firmware detected"
-	rawprograms=$(${BIN_7ZZ} l -ba ${FILEPATH} | gawk '{ print $NF }' | grep rawprogram)
-	${BIN_7ZZ} e -y ${FILEPATH} $rawprograms 2>/dev/null >> ${TMPDIR}/zip.log
+	rawprograms=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{ print $NF }' | grep rawprogram)
+	${BIN_7ZZ} e -y "${FILEPATH}" "$rawprograms" 2>/dev/null >> "${TMPDIR}"/zip.log
 	log_info "Extracting partitions from QFIL package..."
 	for partition in $PARTITIONS; do
-		partitionsonzip=$(${BIN_7ZZ} l -ba ${FILEPATH} | gawk '{ print $NF }' | grep $partition)
-		if [[ ! $partitionsonzip == "" ]]; then
-			${BIN_7ZZ} e -y ${FILEPATH} $partitionsonzip 2>/dev/null >> ${TMPDIR}/zip.log
+		partitionsonzip=$(${BIN_7ZZ} l -ba "${FILEPATH}" | gawk '{ print $NF }' | grep "$partition")
+		if [[ -n "$partitionsonzip" ]]; then
+			${BIN_7ZZ} e -y "${FILEPATH}" "$partitionsonzip" 2>/dev/null >> "${TMPDIR}"/zip.log
 			if [[ ! -f "$partition.img" ]]; then
 				if [[ -f "$partition.raw.img" ]]; then
 					mv "$partition.raw.img" "$partition.img"
 				else
-					rawprogramsfile=$(grep -rlw $partition rawprogram*.xml)
-					"${PACKSPARSEIMG}" -t $partition -x $rawprogramsfile > ${TMPDIR}/extract.log
+					rawprogramsfile=$(grep -rlw "$partition" rawprogram*.xml)
+					"${PACKSPARSEIMG}" -t "$partition" -x "$rawprogramsfile" > "${TMPDIR}"/extract.log
 					mv "$partition.raw" "$partition.img"
 				fi
 			fi

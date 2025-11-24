@@ -34,7 +34,7 @@ function util_check_dependencies() {
 function util_sanitize_filename() {
 	local filename="$1"
 	# Remove or replace problematic characters
-	filename=$(echo "${filename}" | sed 's/[^a-zA-Z0-9._-]/_/g')
+	filename="${filename//[^a-zA-Z0-9._-]/_}"
 	echo "${filename}"
 }
 
@@ -308,7 +308,7 @@ function util_cleanup_temp() {
 # Trap cleanup on exit
 function util_trap_cleanup() {
 	local cleanup_func="$1"
-	trap "${cleanup_func}" EXIT INT TERM
+	trap ''"${cleanup_func}"'' EXIT INT TERM
 }
 
 # Generate unique temporary directory
@@ -409,7 +409,7 @@ function util_script_dir() {
 		source="$(readlink "$source")"
 		[[ $source != /* ]] && source="$dir/$source"
 	done
-	echo "$(cd -P "$(dirname "$source")" && pwd)"
+	cd -P "$(dirname "$source")" && pwd
 }
 
 # Print colored text

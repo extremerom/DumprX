@@ -39,16 +39,16 @@ log_ok() {
 }
 
 function url_str() {
-    echo $1 | awk '{gsub("-","+"); gsub("_","/"); gsub(",",""); print}'
+    echo "$1" | awk '{gsub("-","+"); gsub("_","/"); gsub(",",""); print}'
 }
 function json_req() {
     wget -q -O- --post-data="$1" --header='Content-Type:application/json' "https://g.api.mega.co.nz/cs$2"
 }
 function key_solver() {
-    echo -n $1 | base64 --decode --ignore-garbage 2>/dev/null | xxd -p | tr -d '\n'
+    echo -n "$1" | base64 --decode --ignore-garbage 2>/dev/null | xxd -p | tr -d '\n'
 }
 function json_post() {
-    echo $2 | awk -v c=$1 -F'"' '{for(i = 1; i <= NF; i++)
+    echo "$2" | awk -v c="$1" -F'"' '{for(i = 1; i <= NF; i++)
         {if($i==c)
             if((c=="t")||(c=="s")||(c=="ts"))
             {gsub(/[[:punct:]]/,"",$(i+1));print $(i+1);}
@@ -58,15 +58,16 @@ function json_post() {
     }'
 }
 function key_dec() {
-    local var=$(key_solver "$(url_str $key)")
-    echo $(url_str $1) | openssl enc -a -d -A -aes-128-ecb -K $var -iv "00000000000000000000000000000000" -nopad 2>/dev/null | base64
+    local var
+    var=$(key_solver "$(url_str "$key")")
+    url_str "$1" | openssl enc -a -d -A -aes-128-ecb -K "$var" -iv "00000000000000000000000000000000" -nopad 2>/dev/null | base64
 }
 function size() {
     local i=0
-    local var=$1
+    local var="$1"
     local pad=$(((4 - ${#var} % 4) % 4))
-    for i in $(seq 1 $pad); do var="$var="; done
-    echo $var
+    for i in $(seq 1 "$pad"); do var="$var="; done
+    echo "$var"
 }
 function meta_dec_key() {
     local var
@@ -80,13 +81,13 @@ function meta_dec() {
 }
 function mega_link_vars() {
     if [[ "$1" == *"/#"* ]]; then
-        id=$(echo $1 | awk -F'!' '{print $2}')
-        key=$(echo $1 | awk -F'!' '{print $3}')
-        fld=$(echo $1 | awk -F'!' '{print $1}')
+        id=$(echo "$1" | awk -F'!' '{print $2}')
+        key=$(echo "$1" | awk -F'!' '{print $3}')
+        fld=$(echo "$1" | awk -F'!' '{print $1}')
     else
-        fld=$(echo $1 | awk '{gsub(/[^\/]*$/,"");print}')
-        id=$(echo $1 | awk -F'/' '{print $NF}' | awk -F# '{print $1}')
-        key=$(echo $1 | awk -F'/' '{print $NF}' | awk -F# '{print $2}')
+        fld=$(echo "$1" | awk '{gsub(/[^\/]*$/,"");print}')
+        id=$(echo "$1" | awk -F'/' '{print $NF}' | awk -F# '{print $1}')
+        key=$(echo "$1" | awk -F'/' '{print $NF}' | awk -F# '{print $2}')
     fi
 }
 function tree_gen() {
@@ -128,55 +129,58 @@ function file_down() {
 }
 function mega() {
 	log_msg "Mega.NZ website link detected"
-    mega_link_vars $1
+    mega_link_vars "$1"
     if [ "${fld: -1}" == "F" ] || [[ "$fld" == *"folder"* ]]; then
         json_req '[{"a":"f","c":1,"ca":1,"r":1}]' "?id=&n=$id" >.badown.tmp
-        [[ $(file .badown.tmp) == *"gzip"* ]] && response1=$(cat .badown.tmp | gunzip) || response1=$(cat .badown.tmp)
-        keys=($(json_post 'k' $response1 | awk -F':' '{print $2}'))
-        names=($(json_post 'h' $response1))
-        types=($(json_post 't' $response1))
-        attrs=($(json_post 'a' $response1))
-        sizes=($(json_post 's' $response1))
-        parents=($(json_post 'p' $response1))
+        if [[ $(file .badown.tmp) == *"gzip"* ]]; then
+            response1=$(gunzip < .badown.tmp)
+        else
+            response1=$(cat .badown.tmp)
+        fi
+        mapfile -t keys < <(json_post 'k' "$response1" | awk -F':' '{print $2}')
+        mapfile -t names < <(json_post 'h' "$response1")
+        mapfile -t types < <(json_post 't' "$response1")
+        mapfile -t attrs < <(json_post 'a' "$response1")
+        mapfile -t sizes < <(json_post 's' "$response1")
+        mapfile -t parents < <(json_post 'p' "$response1")
         for i in $(seq 0 $((${#types[@]} - 1))); do
             unset path
-            tree_gen ${parents[i]} $((${#types[@]} - 1))
-            meta_dec_key "$(key_solver $(key_dec $(size ${keys[i]})))"
-            file_name="$(json_post 'n' "$(meta_dec $meta_key $(size $(url_str ${attrs[i]})))")"
+            tree_gen "${parents[i]}" $((${#types[@]} - 1))
+            meta_dec_key "$(key_solver "$(key_dec "$(size "${keys[i]}")")")"
+            file_name="$(json_post 'n' "$(meta_dec "$meta_key" "$(size "$(url_str "${attrs[i]}")")")")"
             path=$path/$file_name
-            if [ ${types[i]} == 1 ]; then
+            if [ "${types[i]}" == 1 ]; then
                 sleep .5
                 mkdir -p "$PWD$path"
-            elif [ ${types[i]} == 0 ]; then
-                file_url=$(json_post 'g' $(json_req "[{\"a\":\"g\",\"g\":1,\"n\":\"${names[i]}\"}]" "?id=&n=$id"))
-                file_downdec $file_url "$file_name" $meta_key $meta_iv
+            elif [ "${types[i]}" == 0 ]; then
+                file_url=$(json_post 'g' "$(json_req "[{\"a\":\"g\",\"g\":1,\"n\":\"${names[i]}\"}]" "?id=&n=$id")")
+                file_downdec "$file_url" "$file_name" "$meta_key" "$meta_iv"
                 sleep .5
                 mv "$file_name" "$PWD$path"
             fi
         done
     elif [ "${fld: -1}" == "#" ] || [[ "$fld" == *"file"* ]]; then
-        meta_dec_key $(key_solver $(url_str $key))
-        name_key=$(url_str $(json_post 'at' $(json_req "[{\"a\":\"g\", \"p\":\"$id\"}]" '?id=&ak=')))
-        file_name="$(json_post 'n' "$(meta_dec $meta_key $(size $name_key))")"
-        file_url=$(json_post 'g' $(json_req "[{\"a\":\"g\",\"g\":1,\"p\":\"$id\"}]" '?'))
-        file_downdec $file_url "$file_name" $meta_key $meta_iv
+        meta_dec_key "$(key_solver "$(url_str "$key")")"
+        name_key=$(url_str "$(json_post 'at' "$(json_req "[{\"a\":\"g\", \"p\":\"$id\"}]" '?id=&ak=')")")
+        file_name="$(json_post 'n' "$(meta_dec "$meta_key" "$(size "$name_key")")")"
+        file_url=$(json_post 'g' "$(json_req "[{\"a\":\"g\",\"g\":1,\"p\":\"$id\"}]" '?')")
+        file_downdec "$file_url" "$file_name" "$meta_key" "$meta_iv"
     fi
 }
 function mediafire() {
 	log_msg "Mediafire website link detected"
-	file_url=$(wget -q -O- $1 |
-		grep :\/\/download |
+	file_url=$(wget -q -O- "$1" |
+		grep '://download' |
 		awk -F'"' '{print $2}')
-	file_name=$(printf '%b' "$(echo $file_url |
+	file_name=$(printf '%b' "$(echo "$file_url" |
 		awk -F'/' '{gsub("%","\\x");gsub("+"," ");print $NF}')")
-	file_down $file_url "$file_name"
+	file_down "$file_url" "$file_name"
 }
 function gdrive() {
 	log_msg "Google Drive URL detected"
 	FILE_ID="$(echo "${1:?}" | sed -r 's/.*([0-9a-zA-Z_-]{33}).*/\1/')"
 	CONFIRM=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')
-	aria2c -c -s16 -x16 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID"
-	if [[ $? -eq 0 ]]; then
+	if aria2c -c -s16 -x16 -m10 --console-log-level=warn --summary-interval=0 --check-certificate=false --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID"; then
 		log_ok "Google Drive download completed"
 	else
 		log_err "Google Drive download failed"

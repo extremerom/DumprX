@@ -22,7 +22,7 @@ pout() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_info "$*"
 	else
-		printf "${C_OUT}${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "${C_OUT}${*}"
 	fi
 }
 
@@ -30,7 +30,7 @@ perr() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_error "$*"
 	else
-		printf "${C_ERR}${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "${C_ERR}${*}"
 	fi
 }
 
@@ -38,7 +38,7 @@ psuccess() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_success "$*"
 	else
-		printf "\033[0;32m${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "\033[0;32m${*}"
 	fi
 }
 
@@ -46,13 +46,13 @@ pdebug() {
 	if [[ "${USE_LOGGER}" == "true" ]]; then
 		log_debug "$*"
 	else
-		printf "\033[0;36m${*}${C_CLEAR}\n"
+		printf "%s${C_CLEAR}\n" "\033[0;36m${*}"
 	fi
 }
 
 unpack_complete()
 {
-	[ ! -z $format ] && echo format=$format >> ../img_info
+	[ -n "$format" ] && echo "format=$format" >> ../img_info
 	psuccess "Unpack completed."
 	exit
 }
@@ -64,16 +64,16 @@ usage()
 	pout "-----------------------------------------------------"
 	perr " Not enough parameters or parameter error!"
 	pout " unpack boot.img & decompress ramdisk:"
-	pout "    $(basename $0) [img] [output dir]"
-	pout "    $(basename $0) boot.img boot20130905\n"
+	pout "    $(basename "$0") [img] [output dir]"
+	pout "    $(basename "$0") boot.img boot20130905\n"
 	exit
 }
 
 #decide action
 [ $# -lt 2 ] || [ $# -gt 3 ] && usage
 
-tempdir="$(readlink -f $2)"
-mkdir -p $tempdir
+tempdir="$(readlink -f "$2")"
+mkdir -p "$tempdir"
 
 if [[ "${USE_LOGGER}" == "true" ]]; then
 	log_step "Unpacking boot image"
