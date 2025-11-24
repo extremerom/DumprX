@@ -69,6 +69,7 @@ function download_direct() {
 		local max_attempts="${DUMPRX_MAX_RETRIES:-3}"
 		local delay=5
 		local download_success=false
+		local CLEAR_LINE_WIDTH=120  # Width to clear terminal line
 		
 		while [[ ${attempt} -le ${max_attempts} ]]; do
 			log_debug "Download attempt ${attempt}/${max_attempts}"
@@ -76,17 +77,12 @@ function download_direct() {
 			local last_progress=""
 			local temp_output="/tmp/aria2c_output_$$.log"
 			
-			# Run aria2c and capture output to file, process in real-time
+			# Run aria2c and capture output to file
 			"${download_cmd}" "${download_args[@]}" > "${temp_output}" 2>&1 &
 			local aria_pid=$!
 			
-			# Process output in real-time
+			# Process output in real-time with tail
 			tail -f "${temp_output}" 2>/dev/null | while IFS= read -r line; do
-				# Check if aria2c process is still running
-				if ! kill -0 ${aria_pid} 2>/dev/null; then
-					break
-				fi
-				
 				# Filter out aria2c summary lines that start with [#
 				if [[ "${line}" =~ ^\[#[0-9a-f]+ ]]; then
 					# Extract key information from progress line
@@ -136,6 +132,8 @@ function download_direct() {
 				elif [[ "${line}" =~ ^[0-9a-f]+\|OK ]]; then
 					# Download completed successfully
 					printf "\n"
+					# Exit the while loop when download completes
+					break
 				else
 					# For any other output (errors, warnings), pass through
 					if [[ -n "${line}" ]] && [[ ! "${line}" =~ ^[[:space:]]*$ ]]; then
@@ -149,12 +147,17 @@ function download_direct() {
 			wait ${aria_pid}
 			local download_result=$?
 			
-			# Stop the tail process
-			kill ${tail_pid} 2>/dev/null
-			wait ${tail_pid} 2>/dev/null
+			# Give tail a moment to finish processing remaining output
+			sleep 0.5
 			
-			# Clear the progress line
-			printf "\r%*s\r" 100 ""
+			# Stop the tail process gracefully
+			if kill -0 ${tail_pid} 2>/dev/null; then
+				kill -TERM ${tail_pid} 2>/dev/null
+				wait ${tail_pid} 2>/dev/null
+			fi
+			
+			# Clear the progress line using defined width
+			printf "\r%*s\r" ${CLEAR_LINE_WIDTH} ""
 			
 			# Clean up temp file
 			rm -f "${temp_output}"
