@@ -2001,8 +2001,9 @@ split_files(){
 
 if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	GITHUB_TOKEN=$(< "${PROJECT_DIR}"/.github_token)	# Write Your Github Token In a Text File
-	[[ -z "$(git config --get user.email)" ]] && git config user.email "guptasushrut@gmail.com"
-	[[ -z "$(git config --get user.name)" ]] && git config user.name "Sushrut1101"
+	# Configure git user before git init
+	git config --global user.name "github-actions[bot]"
+	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 	if [[ -s "${PROJECT_DIR}"/.github_orgname ]]; then
 		GIT_ORG=$(< "${PROJECT_DIR}"/.github_orgname)	# Set Your Github Organization Name
 	else
@@ -2135,6 +2136,10 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	printf "\nFinal Repository Should Look Like...\n" && ls -lAog
 	printf "\n\nStarting Git Init...\n"
 
+	# Configure git user before git init
+	git config --global user.name "github-actions[bot]"
+	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+	
 	git init		# Insure Your GitLab Authorization Before Running This Script
 	# Configure git for better handling of large repositories and network issues
 	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
@@ -2172,8 +2177,6 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
-	[[ -z "$(git config --get user.email)" ]] && git config user.email "guptasushrut@gmail.com"
-	[[ -z "$(git config --get user.name)" ]] && git config user.name "Sushrut1101"
 
 	# Create Subgroup
 	GRP_ID=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/groups/${GIT_ORG}" | jq -r '.id')
