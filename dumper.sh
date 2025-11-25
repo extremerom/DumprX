@@ -2001,14 +2001,22 @@ split_files(){
 
 if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	GITHUB_TOKEN=$(< "${PROJECT_DIR}"/.github_token)	# Write Your Github Token In a Text File
-	[[ -z "$(git config --get user.email)" ]] && git config user.email "guptasushrut@gmail.com"
-	[[ -z "$(git config --get user.name)" ]] && git config user.name "Sushrut1101"
+	
+	# Determine GIT_ORG before setting global git config
+	# This logic determines whether to create a personal or organization repository
 	if [[ -s "${PROJECT_DIR}"/.github_orgname ]]; then
 		GIT_ORG=$(< "${PROJECT_DIR}"/.github_orgname)	# Set Your Github Organization Name
+		GIT_USER="github-actions[bot]"  # Set to bot for the comparison later
 	else
-		GIT_USER="$(git config --get user.name)"
+		# Check if git config already has a user.name set, otherwise use github-actions[bot]
+		# This is used to determine personal vs org repo before we overwrite with bot identity
+		GIT_USER="$(git config --get user.name 2>/dev/null || echo 'github-actions[bot]')"
 		GIT_ORG="${GIT_USER}"				# Otherwise, Your Username will be used
 	fi
+	
+	# Configure git user before git init (required for GitHub Actions)
+	git config --global user.name "github-actions[bot]"
+	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 	# Check if already dumped or not
 	curl -sf "https://raw.githubusercontent.com/${GIT_ORG}/${repo}/${branch}/all_files.txt" 2>/dev/null && { printf "Firmware already dumped!\nGo to https://github.com/%s/%s/tree/%s\n" "${GIT_ORG}" "${repo}" "${branch}" && exit 1; }
 	# Remove The Journal File Inside System/Vendor
@@ -2110,10 +2118,15 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	fi
 
 elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
+	# Determine GIT_ORG before setting global git config
+	# This logic determines whether to create a personal or organization repository
 	if [[ -s "${PROJECT_DIR}"/.gitlab_group ]]; then
 		GIT_ORG=$(< "${PROJECT_DIR}"/.gitlab_group)	# Set Your Gitlab Group Name
+		GIT_USER="github-actions[bot]"  # Set to bot for comparison (won't be used in GitLab)
 	else
-		GIT_USER="$(git config --get user.name)"
+		# Check if git config already has a user.name set, otherwise use github-actions[bot]
+		# This is used to determine personal vs org repo before we overwrite with bot identity
+		GIT_USER="$(git config --get user.name 2>/dev/null || echo 'github-actions[bot]')"
 		GIT_ORG="${GIT_USER}"				# Otherwise, Your Username will be used
 	fi
 
@@ -2134,6 +2147,10 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	split_files 62M 47M
 	printf "\nFinal Repository Should Look Like...\n" && ls -lAog
 	printf "\n\nStarting Git Init...\n"
+
+	# Configure git user before git init
+	git config --global user.name "github-actions[bot]"
+	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
 	git init		# Insure Your GitLab Authorization Before Running This Script
 	# Configure git for better handling of large repositories and network issues
@@ -2172,8 +2189,6 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
-	[[ -z "$(git config --get user.email)" ]] && git config user.email "guptasushrut@gmail.com"
-	[[ -z "$(git config --get user.name)" ]] && git config user.name "Sushrut1101"
 
 	# Create Subgroup
 	GRP_ID=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/groups/${GIT_ORG}" | jq -r '.id')
