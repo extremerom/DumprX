@@ -67,6 +67,8 @@ jobs:
           cd ${GITHUB_WORKSPACE}
           chmod +x dumper.sh
           ./dumper.sh "${DUMP_URL}"
+          sudo chown -R $(whoami):$(id -gn) ./out
+          sudo chmod -R 777 ./out
           cd out
           zip -r -9 ../out.zip .
 
