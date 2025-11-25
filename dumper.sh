@@ -612,8 +612,18 @@ function extract_partition_image() {
 	# Try extraction methods in order based on filesystem type
 	local extraction_success=false
 	
-	# For EROFS: Try mount first (most reliable), then fsck.erofs, then 7z
+	# For EROFS: Try fsck.erofs first (most efficient), then mount as fallback
 	if [[ "${fs_type}" == "erofs" ]]; then
+		log_info "Trying fsck.erofs extraction for EROFS..."
+		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with fsck.erofs"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "fsck.erofs extraction failed for ${partition}, trying mount loop..."
+		fi
+		
 		log_info "Trying mount loop extraction for EROFS..."
 		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
 			log_success "Extracted ${partition} with mount loop"
@@ -621,16 +631,7 @@ function extract_partition_image() {
 			extraction_success=true
 			return 0
 		else
-			log_warn "Mount loop extraction failed for ${partition}, trying fsck.erofs..."
-		fi
-		
-		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
-			log_success "Extracted ${partition} with fsck.erofs"
-			rm -f "${img_file}" 2>/dev/null
-			extraction_success=true
-			return 0
-		else
-			log_warn "fsck.erofs extraction failed for ${partition}"
+			log_warn "Mount loop extraction failed for ${partition}"
 		fi
 	fi
 	
