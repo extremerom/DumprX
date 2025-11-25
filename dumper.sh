@@ -2003,16 +2003,18 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	GITHUB_TOKEN=$(< "${PROJECT_DIR}"/.github_token)	# Write Your Github Token In a Text File
 	
 	# Determine GIT_ORG before setting global git config
+	# This logic determines whether to create a personal or organization repository
 	if [[ -s "${PROJECT_DIR}"/.github_orgname ]]; then
 		GIT_ORG=$(< "${PROJECT_DIR}"/.github_orgname)	# Set Your Github Organization Name
-		GIT_USER="github-actions[bot]"
+		GIT_USER="github-actions[bot]"  # Set to bot for the comparison later
 	else
 		# Check if git config already has a user.name set, otherwise use github-actions[bot]
+		# This is used to determine personal vs org repo before we overwrite with bot identity
 		GIT_USER="$(git config --get user.name 2>/dev/null || echo 'github-actions[bot]')"
 		GIT_ORG="${GIT_USER}"				# Otherwise, Your Username will be used
 	fi
 	
-	# Configure git user before git init
+	# Configure git user before git init (required for GitHub Actions)
 	git config --global user.name "github-actions[bot]"
 	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 	# Check if already dumped or not
@@ -2117,11 +2119,13 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 
 elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	# Determine GIT_ORG before setting global git config
+	# This logic determines whether to create a personal or organization repository
 	if [[ -s "${PROJECT_DIR}"/.gitlab_group ]]; then
 		GIT_ORG=$(< "${PROJECT_DIR}"/.gitlab_group)	# Set Your Gitlab Group Name
-		GIT_USER="github-actions[bot]"
+		GIT_USER="github-actions[bot]"  # Set to bot for comparison (won't be used in GitLab)
 	else
 		# Check if git config already has a user.name set, otherwise use github-actions[bot]
+		# This is used to determine personal vs org repo before we overwrite with bot identity
 		GIT_USER="$(git config --get user.name 2>/dev/null || echo 'github-actions[bot]')"
 		GIT_ORG="${GIT_USER}"				# Otherwise, Your Username will be used
 	fi
