@@ -1666,7 +1666,7 @@ _git_push_wrapper() {
 	# The library function signature is: git_push_with_retry <repo_dir> <remote> <branch> [max_retries]
 	
 	# Ensure branch variable is set
-	if [[ -z "${branch}" ]]; then
+	if [[ -z "$branch" ]]; then
 		log_error "Branch name is not set for git push"
 		return 1
 	fi
@@ -1692,7 +1692,6 @@ _git_push_wrapper() {
 	# Call library function with proper parameters
 	# Parameters: <repo_dir> <remote> <branch> [max_retries]
 	git_push_with_retry "." "origin" "${branch}" 10
-	return $?
 }
 
 # Helper function to split a large directory into multiple parts
@@ -2022,7 +2021,7 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	git init
 	
 	# Use improved git configuration from git_upload library
-	if type -t git_configure_large_repo >/dev/null 2>&1; then
+	if declare -F git_configure_large_repo >/dev/null; then
 		git_configure_large_repo "." || log_warn "Could not configure git optimally"
 	else
 		# Fallback to basic configuration
