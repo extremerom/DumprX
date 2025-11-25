@@ -2139,7 +2139,7 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	# Configure git user before git init
 	git config --global user.name "github-actions[bot]"
 	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-	
+
 	git init		# Insure Your GitLab Authorization Before Running This Script
 	# Configure git for better handling of large repositories and network issues
 	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
