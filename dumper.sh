@@ -12,6 +12,11 @@ source "${PROJECT_DIR}/lib/utils.sh"
 source "${PROJECT_DIR}/lib/config.sh"
 source "${PROJECT_DIR}/lib/downloaders.sh"
 
+# Source git_upload library if available (for advanced git operations)
+if [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
+	source "${PROJECT_DIR}/lib/git_upload.sh"
+fi
+
 # Clear Screen
 tput reset 2>/dev/null || clear
 
@@ -1655,138 +1660,106 @@ find "$OUTDIR" -type f -printf '%P\n' | sort | grep -v ".git/" > "$OUTDIR"/all_f
 rm -rf "${TMPDIR}" 2>/dev/null
 
 # Helper function to push with retry logic
-git_push_with_retry() {
-	# Use new git_upload library for better handling
-	if [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
-		source "${PROJECT_DIR}/lib/git_upload.sh"
-		
-		# Configure git for large repo
-		git_configure_large_repo "." || return 1
-		
-		# Ensure branch exists and has commits before pushing
-		if ! git rev-parse --verify "${branch}" >/dev/null 2>&1; then
-			log_warn "Branch '${branch}' does not exist, will be created with first commit"
-		fi
-		
-		# Check if there are any commits on the current branch
-		if ! git log -1 >/dev/null 2>&1; then
-			log_warn "No commits found on branch ${branch}"
-			log_info "Creating initial commit if staging area has files..."
-			
-			# Check if there are staged changes
-			if ! git diff --cached --quiet 2>/dev/null; then
-				log_info "Staging area has files, committing them"
-				git commit -sm "Initial commit for ${description:-firmware dump}" || {
-					log_error "Failed to create initial commit"
-					return 1
-				}
-			else
-				log_warn "No staged files to commit - push will be skipped"
-				return 0  # Return success as there's nothing to push
-			fi
-		fi
-		
-		# Use improved push with retry
-		local max_attempts=10
-		local attempt=1
-		local wait_time=5
-		local max_wait=300  # 5 minutes max
-		
-		while [ $attempt -le $max_attempts ]; do
-			log_info "Attempting to push (attempt $attempt/$max_attempts)..."
-			
-			# Try push with detailed logging
-			if git push --progress -u origin "${branch}" 2>&1 | tee /tmp/git_push_output_$$.log; then
-				log_success "Push successful!"
-				rm -f /tmp/git_push_output_$$.log
-				return 0
-			else
-				local exit_code=$?
-				log_warn "Push failed with exit code $exit_code"
-				
-				# Analyze the error
-				if grep -q "src refspec.*does not match any" /tmp/git_push_output_$$.log; then
-					log_error "Branch ${branch} does not exist or has no commits"
-					log_error "This should not happen as we checked earlier"
-					rm -f /tmp/git_push_output_$$.log
-					return 1
-				elif grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
-					log_warn "Server error detected (HTTP 500/502/503)"
-					# Increase buffer size
-					git config http.postBuffer 1048576000  # 1GB
-					git config http.version HTTP/1.1
-				elif grep -q "RPC failed" /tmp/git_push_output_$$.log; then
-					log_warn "RPC failed - adjusting settings"
-					git config pack.windowMemory 128m
-					git config pack.packSizeLimit 128m
-				elif grep -q "too large" /tmp/git_push_output_$$.log || grep -q "larger than" /tmp/git_push_output_$$.log; then
-					log_error "Files too large - consider using Git LFS"
-					# Enable LFS tracking for large files
-					git lfs install 2>/dev/null
-					find . -type f -size +50M -not -path ".git/*" | while read -r largefile; do
-						git lfs track "$largefile" 2>/dev/null
-					done
-				elif grep -q "failed to push some refs" /tmp/git_push_output_$$.log; then
-					log_warn "Push rejected - checking for diverged history"
-				fi
-				
-				if [ $attempt -lt $max_attempts ]; then
-					log_info "Waiting ${wait_time} seconds before retry..."
-					sleep $wait_time
-					# Exponential backoff with cap
-					wait_time=$((wait_time * 2))
-					if [ $wait_time -gt $max_wait ]; then
-						wait_time=$max_wait
-					fi
-					attempt=$((attempt + 1))
-				else
-					log_error "Failed to push after $max_attempts attempts"
-					log_info "Last error output:"
-					tail -20 /tmp/git_push_output_$$.log
-					rm -f /tmp/git_push_output_$$.log
-					return 1
-				fi
-			fi
-		done
-		rm -f /tmp/git_push_output_$$.log
-	else
-		# Fallback to original implementation
-		local max_attempts=5
-		local attempt=1
-		local wait_time=10
-		
-		# Ensure there are commits before pushing
-		if ! git log -1 >/dev/null 2>&1; then
-			echo "No commits found - creating initial commit if needed"
-			if ! git diff --cached --quiet 2>/dev/null; then
-				git commit -sm "Initial commit for ${description:-firmware dump}" || return 1
-			else
-				echo "No staged files to commit"
-				return 0
-			fi
-		fi
-		
-		while [ $attempt -le $max_attempts ]; do
-			echo "Attempting to push (attempt $attempt/$max_attempts)..."
-			if git push -u origin "${branch}"; then
-				echo "Push successful!"
-				return 0
-			else
-				local exit_code=$?
-				echo "Push failed with exit code $exit_code"
-				if [ $attempt -lt $max_attempts ]; then
-					echo "Waiting ${wait_time} seconds before retry..."
-					sleep $wait_time
-					# Exponential backoff
-					wait_time=$((wait_time * 2))
-					attempt=$((attempt + 1))
-				else
-					echo "ERROR: Failed to push after $max_attempts attempts"
-					return 1
-				fi
-			fi
-		done
+# Wrapper that provides a simple interface while calling the library function with proper parameters
+_git_push_wrapper() {
+	# This wrapper ensures the library's git_push_with_retry is called with correct parameters
+	# The library function signature is: git_push_with_retry <repo_dir> <remote> <branch> [max_retries]
+	
+	# Ensure branch variable is set
+	if [[ -z "${branch}" ]]; then
+		log_error "Branch name is not set for git push"
+		return 1
 	fi
+	
+	# Ensure branch exists and has commits before pushing
+	if ! git rev-parse --verify "${branch}" >/dev/null 2>&1; then
+		log_warn "Branch '${branch}' does not exist, will be created with first commit"
+	fi
+	
+	# Check if there are any commits on the current branch
+	if ! git log -1 >/dev/null 2>&1; then
+		log_warn "No commits found on branch ${branch}"
+		log_info "Creating initial commit if staging area has files..."
+		
+		# Check if there are staged changes
+		if ! git diff --cached --quiet 2>/dev/null; then
+			log_info "Staging area has files, committing them"
+			git commit -sm "Initial commit for ${description:-firmware dump}" || {
+				log_error "Failed to create initial commit"
+				return 1
+			}
+		else
+			log_warn "No staged files to commit - push will be skipped"
+			return 0  # Return success as there's nothing to push
+		fi
+	fi
+	
+	# Try to use the library function if available
+	if declare -f git_push_with_retry >/dev/null 2>&1 && [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
+		# Call library function with proper parameters
+		# Parameters: <repo_dir> <remote> <branch> [max_retries]
+		git_push_with_retry "." "origin" "${branch}" 10
+		return $?
+	fi
+	
+	# Fallback implementation if library not available
+	local max_attempts=10
+	local attempt=1
+	local wait_time=5
+	local max_wait=300  # 5 minutes max
+	
+	while [ $attempt -le $max_attempts ]; do
+		log_info "Attempting to push (attempt $attempt/$max_attempts)..."
+		
+		# Try push with detailed logging
+		if git push --progress -u origin "${branch}" 2>&1 | tee /tmp/git_push_output_$$.log; then
+			log_success "Push successful!"
+			rm -f /tmp/git_push_output_$$.log
+			return 0
+		else
+			local exit_code=$?
+			log_warn "Push failed with exit code $exit_code"
+			
+			# Analyze the error
+			if grep -q "src refspec.*does not match any" /tmp/git_push_output_$$.log; then
+				log_error "Branch ${branch} does not exist or has no commits"
+				rm -f /tmp/git_push_output_$$.log
+				return 1
+			elif grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
+				log_warn "Server error detected (HTTP 500/502/503)"
+				git config http.postBuffer 1048576000  # 1GB
+				git config http.version HTTP/1.1
+			elif grep -q "RPC failed" /tmp/git_push_output_$$.log; then
+				log_warn "RPC failed - adjusting settings"
+				git config pack.windowMemory 128m
+				git config pack.packSizeLimit 128m
+			elif grep -q "too large" /tmp/git_push_output_$$.log || grep -q "larger than" /tmp/git_push_output_$$.log; then
+				log_error "Files too large - consider using Git LFS"
+				git lfs install 2>/dev/null
+				find . -type f -size +50M -not -path ".git/*" | while read -r largefile; do
+					git lfs track "$largefile" 2>/dev/null
+				done
+			fi
+			
+			if [ $attempt -lt $max_attempts ]; then
+				log_info "Waiting ${wait_time} seconds before retry..."
+				sleep $wait_time
+				wait_time=$((wait_time * 2))
+				if [ $wait_time -gt $max_wait ]; then
+					wait_time=$max_wait
+				fi
+				attempt=$((attempt + 1))
+			else
+				log_error "Failed to push after $max_attempts attempts"
+				log_info "Last error output:"
+				tail -20 /tmp/git_push_output_$$.log
+				rm -f /tmp/git_push_output_$$.log
+				return 1
+			fi
+		fi
+	done
+	rm -f /tmp/git_push_output_$$.log
+	return 1
 }
 
 # Helper function to split a large directory into multiple parts
@@ -1844,7 +1817,7 @@ split_and_push_directory() {
 			# Only commit if there are staged changes (git diff returns non-zero when changes exist)
 			if ! git diff --cached --quiet; then
 				git commit -sm "Add ${dir_name} part ${part}/${num_parts} for ${description}"
-				git_push_with_retry || return 1
+				_git_push_wrapper || return 1
 			fi
 		fi
 	done
@@ -1865,7 +1838,7 @@ commit_binary_files_separately() {
 		find "$dir_path" -type f -name '*.spv' -exec git add {} \; 2>/dev/null
 		if ! git diff --cached --quiet; then
 			git commit -sm "Add .spv files for ${description}"
-			git_push_with_retry || return 1
+			_git_push_wrapper || return 1
 		fi
 	fi
 	
@@ -1875,7 +1848,7 @@ commit_binary_files_separately() {
 		find "$dir_path" -type f -name '*.png' -exec git add {} \; 2>/dev/null
 		if ! git diff --cached --quiet; then
 			git commit -sm "Add .png files for ${description}"
-			git_push_with_retry || return 1
+			_git_push_wrapper || return 1
 		fi
 	fi
 }
@@ -1924,7 +1897,7 @@ commit_and_push(){
 	[ -e ".gitattributes" ] && {
 		git add ".gitattributes"
 		git commit -sm "Setup Git LFS for large files"
-		git_push_with_retry || return 1
+		_git_push_wrapper || return 1
 	}
 
 	# Split APK files into smaller batches to avoid large commits
@@ -1947,7 +1920,7 @@ commit_and_push(){
 				git add "${batch[@]}"
 				if ! git diff --cached --quiet; then
 					git commit -sm "Add apps batch $batch_num/$total_batches for ${description}"
-					git_push_with_retry || return 1
+					_git_push_wrapper || return 1
 				fi
 				batch_num=$((batch_num + 1))
 			fi
@@ -1963,7 +1936,7 @@ commit_and_push(){
 
 		if [ "$dir_added" = true ] && ! git diff --cached --quiet; then
 			git commit -sm "Add ${i} for ${description}"
-			git_push_with_retry || return 1
+			_git_push_wrapper || return 1
 		fi
 	done
 
@@ -2015,7 +1988,7 @@ commit_and_push(){
 		if [ "$has_partition" = true ]; then
 			if ! git diff --cached --quiet; then
 				git commit -sm "Add ${partition} for ${description}"
-				git_push_with_retry || return 1
+				_git_push_wrapper || return 1
 			fi
 		fi
 	done
@@ -2042,7 +2015,7 @@ commit_and_push(){
 				git add "${file_batch[@]}" 2>/dev/null
 				if ! git diff --cached --quiet; then
 					git commit -sm "Add extras batch $file_batch_num/$total_file_batches for ${description}"
-					git_push_with_retry || return 1
+					_git_push_wrapper || return 1
 				fi
 				file_batch_num=$((file_batch_num + 1))
 			fi
@@ -2068,7 +2041,7 @@ commit_and_push(){
 				git add "${final_batch[@]}" 2>/dev/null
 				if ! git diff --cached --quiet; then
 					git commit -sm "Add final extras batch $final_batch_num/$total_final_batches for ${description}"
-					git_push_with_retry || return 1
+					_git_push_wrapper || return 1
 				fi
 				final_batch_num=$((final_batch_num + 1))
 			fi
@@ -2116,8 +2089,7 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	git init
 	
 	# Use improved git configuration from git_upload library
-	if [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
-		source "${PROJECT_DIR}/lib/git_upload.sh"
+	if declare -f git_configure_large_repo >/dev/null 2>&1; then
 		git_configure_large_repo "." || log_warn "Could not configure git optimally"
 	else
 		# Fallback to basic configuration
