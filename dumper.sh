@@ -530,42 +530,33 @@ function extract_with_mount() {
 		return 1
 	fi
 	
-	# Copy contents using simple cp approach (memory efficient, proven to work)
+	# Copy contents using tar pipe (efficient for large directories)
 	log_info "Copying files from mount (this may take a while for large partitions)..."
 	
-	# Create temporary output directory for copying
-	local temp_output="${output_dir}_tmp"
-	mkdir -p "${temp_output}" 2>/dev/null
+	# Create output directory
+	mkdir -p "${output_dir}" 2>/dev/null
 	
-	# Copy files from mount to temporary directory
-	log_debug "Copying files from mount..."
-	sudo cp -rf "${temp_mount}/." "${temp_output}/" 2>/dev/null
-	local cp_result=$?
+	# Use tar pipe to copy files efficiently - this preserves all attributes and handles large files better
+	log_debug "Copying files from mount using tar..."
+	if (cd "${temp_mount}" && sudo tar cf - .) | (cd "${output_dir}" && sudo tar xf -) 2>/dev/null; then
+		local tar_result=0
+	else
+		local tar_result=$?
+	fi
 	
 	# Unmount the image
 	sudo umount "${temp_mount}" 2>/dev/null
 	rm -rf "${temp_mount}"
 	
-	if [ ${cp_result} -eq 0 ]; then
-		# Move files from temporary to final output directory
-		mkdir -p "${output_dir}" 2>/dev/null
-		if sudo cp -rf "${temp_output}/." "${output_dir}/" 2>/dev/null; then
-			sudo rm -rf "${temp_output}"
-			
-			# Fix permissions
-			sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
-			chmod -R u+rwX "${output_dir}/" 2>/dev/null
-			
-			log_debug "Successfully copied files from mount"
-			return 0
-		else
-			log_error "Failed to copy files from temporary directory to output directory"
-			sudo rm -rf "${temp_output}"
-			return 1
-		fi
+	if [ ${tar_result} -eq 0 ]; then
+		# Fix permissions
+		sudo chown -R "$(whoami)" "${output_dir}/" 2>/dev/null
+		chmod -R u+rwX "${output_dir}/" 2>/dev/null
+		
+		log_debug "Successfully copied files from mount"
+		return 0
 	else
 		log_error "Failed to copy files from mount"
-		sudo rm -rf "${temp_output}"
 		return 1
 	fi
 }
@@ -612,18 +603,8 @@ function extract_partition_image() {
 	# Try extraction methods in order based on filesystem type
 	local extraction_success=false
 	
-	# For EROFS: Try fsck.erofs first (most efficient), then mount as fallback
+	# For EROFS: Use mount loop extraction directly
 	if [[ "${fs_type}" == "erofs" ]]; then
-		log_info "Trying fsck.erofs extraction for EROFS..."
-		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
-			log_success "Extracted ${partition} with fsck.erofs"
-			rm -f "${img_file}" 2>/dev/null
-			extraction_success=true
-			return 0
-		else
-			log_warn "fsck.erofs extraction failed for ${partition}, trying mount loop..."
-		fi
-		
 		log_info "Trying mount loop extraction for EROFS..."
 		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
 			log_success "Extracted ${partition} with mount loop"
@@ -677,23 +658,18 @@ function extract_partition_image() {
 	if ! ${extraction_success}; then
 		log_error "Failed to extract ${partition} partition"
 		log_error "Filesystem: ${fs_type}"
+		log_error "Methods tried: 7z, fsck.erofs, mount loop"
 		
 		# Provide helpful error messages based on filesystem
 		case "${fs_type}" in
 			"erofs")
-				log_error "Methods tried: fsck.erofs, mount loop"
 				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
 				;;
 			"f2fs")
-				log_error "Methods tried: mount loop"
 				log_error "F2FS requires Linux kernel 5.15+ for proper support"
 				;;
-			"ext4"|"unknown")
-				log_error "Methods tried: 7z, mount loop"
+			"unknown")
 				log_error "Unknown filesystem - image may be encrypted or corrupted"
-				;;
-			*)
-				log_error "Methods tried: mount loop"
 				;;
 		esac
 		
