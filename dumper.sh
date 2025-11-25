@@ -677,18 +677,23 @@ function extract_partition_image() {
 	if ! ${extraction_success}; then
 		log_error "Failed to extract ${partition} partition"
 		log_error "Filesystem: ${fs_type}"
-		log_error "Methods tried: 7z, fsck.erofs, mount loop"
 		
 		# Provide helpful error messages based on filesystem
 		case "${fs_type}" in
 			"erofs")
+				log_error "Methods tried: fsck.erofs, mount loop"
 				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
 				;;
 			"f2fs")
+				log_error "Methods tried: mount loop"
 				log_error "F2FS requires Linux kernel 5.15+ for proper support"
 				;;
-			"unknown")
+			"ext4"|"unknown")
+				log_error "Methods tried: 7z, mount loop"
 				log_error "Unknown filesystem - image may be encrypted or corrupted"
+				;;
+			*)
+				log_error "Methods tried: mount loop"
 				;;
 		esac
 		
