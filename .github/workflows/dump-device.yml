@@ -7,20 +7,24 @@ on:
         description: 'URL del dump del firmware (debe estar entre comillas simples si contiene caracteres especiales)'
         required: true
         type: string
-      repo_url:
-        description: 'URL del repositorio de destino (ej: https://github.com/usuario/repo)'
+      org_name:
+        default: 'extremerom'
+        description: 'Nombre del autor o organizacion de destino (ej: usuario)'
         required: true
         type: string
-      github_token:
-        description: 'Token de GitHub con permisos de escritura'
-        required: true
 
 jobs:
   dump:
     runs-on: Unica
-    permissions:
-      contents: read
+    environment:
+      name: /dev/null
+      url: /dev/null
     
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
+      
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -52,36 +56,44 @@ jobs:
         run: |
           echo "${GITHUB_TOKEN}" > .github_token
         env:
-          GITHUB_TOKEN: ${{ inputs.github_token }}
-      
-      - name: Extract organization name from repo URL
-        id: extract_org
-        run: |
-          # Extract org/user name from URL
-          REPO_URL="${{ inputs.repo_url }}"
-          # Remove protocol
-          REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||' | sed 's|git@github.com:||' | sed 's|\.git$||')
-          # Get organization/user name (first part before /)
-          ORG_NAME=$(echo "$REPO_PATH" | cut -d'/' -f1)
-          echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
-          echo "Extracted organization name: $ORG_NAME"
+          GITHUB_TOKEN: ${{ secrets.TEST }}
       
       - name: Setup GitHub organization name
         run: |
-          echo "${{ steps.extract_org.outputs.org_name }}" > .github_orgname
+          echo "${{ inputs.org_name }}" > .github_orgname
       
       - name: Run dumper script
         run: |
+          export HOME=${GITHUB_WORKSPACE}
+          cd ${GITHUB_WORKSPACE}
           chmod +x dumper.sh
           ./dumper.sh "${DUMP_URL}"
         env:
           DUMP_URL: ${{ inputs.dump_url }}
-          GITHUB_TOKEN: ${{ inputs.github_token }}
+          GITHUB_TOKEN: ${{ secrets.TEST }}
+        continue-on-error: true
+
+      - name: Set variables
+        run: |
+          echo "date=$(TZ=Asia/Ho_Chi_Minh date +%Y-%m-%d-%H:%M:%S)" >> $GITHUB_OUTPUT
+          echo "Outdir=${GITHUB_WORKSPACE}" >> $GITHUB_OUTPUT
+        id: var
       
       - name: Upload dump artifacts (if not pushed to GitHub)
-        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: device-dump
           path: out/
           retention-days: 7
+          
+      - name: Publish to github
+        uses: softprops/action-gh-release@v1
+        with:
+          files: | 
+            ${{ steps.var.outputs.Outdir }}/out
+          name: Dump Release
+          tag_name: ${{ github.run_id }}
+          body: |
+            - ${{ steps.var.outputs.date }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.TEST }}
