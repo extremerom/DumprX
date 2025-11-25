@@ -2001,15 +2001,20 @@ split_files(){
 
 if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	GITHUB_TOKEN=$(< "${PROJECT_DIR}"/.github_token)	# Write Your Github Token In a Text File
+	
+	# Determine GIT_ORG before setting global git config
+	if [[ -s "${PROJECT_DIR}"/.github_orgname ]]; then
+		GIT_ORG=$(< "${PROJECT_DIR}"/.github_orgname)	# Set Your Github Organization Name
+		GIT_USER="github-actions[bot]"
+	else
+		# Check if git config already has a user.name set, otherwise use github-actions[bot]
+		GIT_USER="$(git config --get user.name 2>/dev/null || echo 'github-actions[bot]')"
+		GIT_ORG="${GIT_USER}"				# Otherwise, Your Username will be used
+	fi
+	
 	# Configure git user before git init
 	git config --global user.name "github-actions[bot]"
 	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-	if [[ -s "${PROJECT_DIR}"/.github_orgname ]]; then
-		GIT_ORG=$(< "${PROJECT_DIR}"/.github_orgname)	# Set Your Github Organization Name
-	else
-		GIT_USER="$(git config --get user.name)"
-		GIT_ORG="${GIT_USER}"				# Otherwise, Your Username will be used
-	fi
 	# Check if already dumped or not
 	curl -sf "https://raw.githubusercontent.com/${GIT_ORG}/${repo}/${branch}/all_files.txt" 2>/dev/null && { printf "Firmware already dumped!\nGo to https://github.com/%s/%s/tree/%s\n" "${GIT_ORG}" "${repo}" "${branch}" && exit 1; }
 	# Remove The Journal File Inside System/Vendor
@@ -2111,10 +2116,13 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	fi
 
 elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
+	# Determine GIT_ORG before setting global git config
 	if [[ -s "${PROJECT_DIR}"/.gitlab_group ]]; then
 		GIT_ORG=$(< "${PROJECT_DIR}"/.gitlab_group)	# Set Your Gitlab Group Name
+		GIT_USER="github-actions[bot]"
 	else
-		GIT_USER="$(git config --get user.name)"
+		# Check if git config already has a user.name set, otherwise use github-actions[bot]
+		GIT_USER="$(git config --get user.name 2>/dev/null || echo 'github-actions[bot]')"
 		GIT_ORG="${GIT_USER}"				# Otherwise, Your Username will be used
 	fi
 
