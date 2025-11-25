@@ -2153,7 +2153,7 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	}
 	
 	# Verify we're on the correct branch
-	current_branch=$(git rev-parse --abbrev-ref HEAD)
+	current_branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "${branch}")
 	if [[ "${current_branch}" != "${branch}" ]]; then
 		log_warn "Current branch '${current_branch}' differs from expected '${branch}'"
 		branch="${current_branch}"
@@ -2258,7 +2258,7 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	}
 	
 	# Verify we're on the correct branch
-	current_branch=$(git rev-parse --abbrev-ref HEAD)
+	current_branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "${branch}")
 	if [[ "${current_branch}" != "${branch}" ]]; then
 		log_warn "Current branch '${current_branch}' differs from expected '${branch}'"
 		branch="${current_branch}"
