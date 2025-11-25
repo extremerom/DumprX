@@ -28,7 +28,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-        
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -68,6 +67,9 @@ jobs:
           cd ${GITHUB_WORKSPACE}
           chmod +x dumper.sh
           ./dumper.sh "${DUMP_URL}"
+          cd out
+          zip -r -9 ../out.zip .
+
         env:
           DUMP_URL: ${{ inputs.dump_url }}
           GITHUB_TOKEN: ${{ secrets.TEST }}
@@ -90,7 +92,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: | 
-            ${{ steps.var.outputs.Outdir }}/out
+            ${{ steps.var.outputs.Outdir }}/out.zip
           name: Dump Release
           tag_name: ${{ github.run_id }}
           body: |
