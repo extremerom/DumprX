@@ -1671,11 +1671,6 @@ _git_push_wrapper() {
 		return 1
 	fi
 	
-	# Ensure branch exists and has commits before pushing
-	if ! git rev-parse --verify "${branch}" >/dev/null 2>&1; then
-		log_debug "Branch '${branch}' does not exist yet, will be created on first push"
-	fi
-	
 	# Check if there are any commits on the current branch
 	if ! git log -1 >/dev/null 2>&1; then
 		log_info "No commits found on branch ${branch}"
@@ -2027,7 +2022,7 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	git init
 	
 	# Use improved git configuration from git_upload library
-	if declare -f git_configure_large_repo >/dev/null 2>&1; then
+	if type -t git_configure_large_repo >/dev/null 2>&1; then
 		git_configure_large_repo "." || log_warn "Could not configure git optimally"
 	else
 		# Fallback to basic configuration
