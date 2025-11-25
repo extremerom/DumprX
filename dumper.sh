@@ -1673,12 +1673,12 @@ _git_push_wrapper() {
 	
 	# Ensure branch exists and has commits before pushing
 	if ! git rev-parse --verify "${branch}" >/dev/null 2>&1; then
-		log_warn "Branch '${branch}' does not exist, will be created with first commit"
+		log_debug "Branch '${branch}' does not exist yet, will be created on first push"
 	fi
 	
 	# Check if there are any commits on the current branch
 	if ! git log -1 >/dev/null 2>&1; then
-		log_warn "No commits found on branch ${branch}"
+		log_info "No commits found on branch ${branch}"
 		log_info "Creating initial commit if staging area has files..."
 		
 		# Check if there are staged changes
@@ -1689,77 +1689,15 @@ _git_push_wrapper() {
 				return 1
 			}
 		else
-			log_warn "No staged files to commit - push will be skipped"
+			log_info "No staged files to commit - push will be skipped"
 			return 0  # Return success as there's nothing to push
 		fi
 	fi
 	
-	# Try to use the library function if available
-	if declare -f git_push_with_retry >/dev/null 2>&1 && [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
-		# Call library function with proper parameters
-		# Parameters: <repo_dir> <remote> <branch> [max_retries]
-		git_push_with_retry "." "origin" "${branch}" 10
-		return $?
-	fi
-	
-	# Fallback implementation if library not available
-	local max_attempts=10
-	local attempt=1
-	local wait_time=5
-	local max_wait=300  # 5 minutes max
-	
-	while [ $attempt -le $max_attempts ]; do
-		log_info "Attempting to push (attempt $attempt/$max_attempts)..."
-		
-		# Try push with detailed logging
-		if git push --progress -u origin "${branch}" 2>&1 | tee /tmp/git_push_output_$$.log; then
-			log_success "Push successful!"
-			rm -f /tmp/git_push_output_$$.log
-			return 0
-		else
-			local exit_code=$?
-			log_warn "Push failed with exit code $exit_code"
-			
-			# Analyze the error
-			if grep -q "src refspec.*does not match any" /tmp/git_push_output_$$.log; then
-				log_error "Branch ${branch} does not exist or has no commits"
-				rm -f /tmp/git_push_output_$$.log
-				return 1
-			elif grep -q "HTTP 50[023]" /tmp/git_push_output_$$.log; then
-				log_warn "Server error detected (HTTP 500/502/503)"
-				git config http.postBuffer 1048576000  # 1GB
-				git config http.version HTTP/1.1
-			elif grep -q "RPC failed" /tmp/git_push_output_$$.log; then
-				log_warn "RPC failed - adjusting settings"
-				git config pack.windowMemory 128m
-				git config pack.packSizeLimit 128m
-			elif grep -q "too large" /tmp/git_push_output_$$.log || grep -q "larger than" /tmp/git_push_output_$$.log; then
-				log_error "Files too large - consider using Git LFS"
-				git lfs install 2>/dev/null
-				find . -type f -size +50M -not -path ".git/*" | while read -r largefile; do
-					git lfs track "$largefile" 2>/dev/null
-				done
-			fi
-			
-			if [ $attempt -lt $max_attempts ]; then
-				log_info "Waiting ${wait_time} seconds before retry..."
-				sleep $wait_time
-				wait_time=$((wait_time * 2))
-				if [ $wait_time -gt $max_wait ]; then
-					wait_time=$max_wait
-				fi
-				attempt=$((attempt + 1))
-			else
-				log_error "Failed to push after $max_attempts attempts"
-				log_info "Last error output:"
-				tail -20 /tmp/git_push_output_$$.log
-				rm -f /tmp/git_push_output_$$.log
-				return 1
-			fi
-		fi
-	done
-	rm -f /tmp/git_push_output_$$.log
-	return 1
+	# Call library function with proper parameters
+	# Parameters: <repo_dir> <remote> <branch> [max_retries]
+	git_push_with_retry "." "origin" "${branch}" 10
+	return $?
 }
 
 # Helper function to split a large directory into multiple parts
