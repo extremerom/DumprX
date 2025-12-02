@@ -8,7 +8,6 @@ import os
 import sys
 import subprocess
 import glob
-from pathlib import Path
 
 
 class OMCDecoder:
@@ -52,8 +51,9 @@ class OMCDecoder:
                                          capture_output=True, text=True, check=False)
                     if result.returncode == 0 and result.stdout.strip():
                         self.omcdecoder_bin = result.stdout.strip()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Could not locate omcdecoder in PATH, will fall through to error below
+                    self._log_debug(f"Exception occurred while running 'which omcdecoder': {e}")
         
         if not self.omcdecoder_bin:
             raise FileNotFoundError(
