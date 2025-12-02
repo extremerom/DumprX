@@ -2359,18 +2359,24 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	log_info "Project URL: ${GITLAB_HOST}/${GIT_ORG}/${repo}"
 
 	# Commit and Push
-	# Pushing via HTTPS doesn't work on GitLab for Large Repos (it's an issue with gitlab for large repos)
-	# NOTE: Your SSH Keys Needs to be Added to your Gitlab Instance
+	# Pushing via SSH for better performance with large repos
+	# Token is only used for API calls (creating repo, updating settings)
+	# NOTE: SSH Keys must be added to your GitLab instance
+	log_step "Configuring Git remote with SSH"
+	log_info "Remote URL: git@${GITLAB_INSTANCE}:${GIT_ORG}/${repo}.git"
 	git remote add origin git@${GITLAB_INSTANCE}:${GIT_ORG}/${repo}.git
 
-	# Ensure that the target repo is public
+	# Ensure that the target repo is public (using API with token)
+	log_info "Setting repository visibility to public (API call)"
 	curl --request PUT --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" --url ''"${GITLAB_HOST}"'/api/v4/projects/'"${PROJECT_ID}"'' --data "visibility=public"
 	printf "\n"
 
-	# Push to GitLab
+	# Push to GitLab via SSH
+	log_header "Pushing Firmware to GitLab via SSH"
 	while [[ ! $(curl -sL "${GITLAB_HOST}/${GIT_ORG}/${repo}/-/raw/${branch}/all_files.txt" | grep "all_files.txt") ]]
 	do
-		printf "\nPushing to %s via SSH...\nBranch:%s\n" "${GITLAB_HOST}/${GIT_ORG}/${repo}.git" "${branch}"
+		log_info "Pushing to git@${GITLAB_INSTANCE}:${GIT_ORG}/${repo}.git"
+		log_info "Branch: ${branch}"
 		sleep 1
 		commit_and_push
 		sleep 1
