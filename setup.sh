@@ -57,7 +57,7 @@ if [[ "$OSTYPE" == "linux-gnu" ]]; then
 	    sudo apt -y update || abort "Failed to update apt repositories"
 	    
 	    log_step "Installing required packages"
-        sudo apt install -y unace unrar zip unzip p7zip-full p7zip-rar sharutils rar uudeview mpack arj cabextract device-tree-compiler liblzma-dev python3-pip brotli liblz4-tool axel gawk aria2 detox cpio rename liblz4-dev jq git-lfs || abort "Package installation failed"
+        sudo apt install -y unace unrar zip unzip p7zip-full p7zip-rar sharutils rar uudeview mpack arj cabextract device-tree-compiler liblzma-dev python3-pip brotli liblz4-tool axel gawk aria2 detox cpio rename liblz4-dev jq git-lfs f2fs-tools || abort "Package installation failed"
         
         log_success "Packages installed successfully"
 
@@ -66,7 +66,7 @@ if [[ "$OSTYPE" == "linux-gnu" ]]; then
         log_info "Fedora based distribution detected"
         
 	    log_step "Installing required packages"
-        sudo dnf install -y unace unrar zip unzip sharutils uudeview arj cabextract file-roller dtc python3-pip brotli axel aria2 detox cpio lz4 python3-devel xz-devel p7zip p7zip-plugins git-lfs || abort "Package installation failed"
+        sudo dnf install -y unace unrar zip unzip sharutils uudeview arj cabextract file-roller dtc python3-pip brotli axel aria2 detox cpio lz4 python3-devel xz-devel p7zip p7zip-plugins git-lfs f2fs-tools || abort "Package installation failed"
         
         log_success "Packages installed successfully"
 
@@ -78,7 +78,7 @@ if [[ "$OSTYPE" == "linux-gnu" ]]; then
         sudo pacman -Syyu --needed --noconfirm >/dev/null || abort "System update failed"
         
         log_step "Installing required packages"
-        sudo pacman -Sy --noconfirm unace unrar p7zip sharutils uudeview arj cabextract file-roller dtc brotli axel gawk aria2 detox cpio lz4 jq git-lfs || abort "Package installation failed"
+        sudo pacman -Sy --noconfirm unace unrar p7zip sharutils uudeview arj cabextract file-roller dtc brotli axel gawk aria2 detox cpio lz4 jq git-lfs f2fs-tools || abort "Package installation failed"
         
         log_success "Packages installed successfully"
 
