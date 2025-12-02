@@ -1,0 +1,13 @@
+# DumprX Python Dependencies
+# Required for enhanced unpacking functionality from MIO-KITCHEN integration
+
+# Core dependencies for payload extraction
+protobuf>=3.20.0
+requests>=2.31.0
+zstandard>=0.19.0
+
+# Cryptography for decryption operations
+pycryptodome>=3.19.0
+
+# Additional utilities
+six>=1.16.0
