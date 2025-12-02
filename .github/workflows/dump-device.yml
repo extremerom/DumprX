@@ -29,7 +29,7 @@ jobs:
     environment:
       name: /dev/null
       url: /dev/null
-    
+
     permissions:
       contents: write
       actions: write
@@ -75,7 +75,7 @@ jobs:
             GITLAB_DOMAIN=$(echo "$REPO_URL" | sed -E 's|^(https?://|git@)||' | sed -E 's|([^/:]+).*|\1|')
             echo "gitlab_instance=${GITLAB_DOMAIN}" >> $GITHUB_OUTPUT
             echo "Extracted GitLab instance: ${GITLAB_DOMAIN}"
-            
+
             # Extract repository path (remove domain and protocol)
             REPO_PATH=$(echo "$REPO_URL" | sed "s|https://${GITLAB_DOMAIN}/||" | sed "s|http://${GITLAB_DOMAIN}/||" | sed "s|git@${GITLAB_DOMAIN}:||" | sed 's|\.git$||')
           fi
@@ -102,7 +102,7 @@ jobs:
           # Setup SSH key for GitLab
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          
+
           # Save SSH key with proper formatting (handle multiline key)
           echo "${GITLAB_SSH_KEY}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
@@ -124,7 +124,7 @@ jobs:
 
           # Setup Git to use SSH
           git config --global core.sshCommand "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=accept-new"
-          
+
           # Test SSH connection
           ssh -T git@${GITLAB_INSTANCE} 2>&1 | grep -q "Welcome to GitLab" || echo "SSH connection test failed, but continuing..."
         env:
@@ -138,7 +138,7 @@ jobs:
           # For GitLab, also setup group name and instance
           if [[ "${{ inputs.platform }}" == "gitlab" ]]; then
             echo "${{ steps.extract_org.outputs.org_name }}" > "${GITHUB_WORKSPACE}/.gitlab_group"
-            
+
             # Save GitLab instance if it's not the default gitlab.com
             GITLAB_INSTANCE="${{ steps.extract_org.outputs.gitlab_instance }}"
             if [[ -n "${GITLAB_INSTANCE}" ]] && [[ "${GITLAB_INSTANCE}" != "gitlab.com" ]]; then
