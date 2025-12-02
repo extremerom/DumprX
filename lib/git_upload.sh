@@ -51,6 +51,7 @@ function git_configure_large_repo() {
 # Initialize Git LFS for large files
 function git_lfs_init() {
 	local repo_dir="${1:-.}"
+	local remote_url="${2:-}"
 	
 	log_step "Initializing Git LFS"
 	
@@ -64,6 +65,12 @@ function git_lfs_init() {
 	
 	# Initialize LFS
 	git lfs install 2>/dev/null || log_warn "Git LFS already initialized"
+	
+	# Enable LFS lock verification if remote URL is provided
+	if [[ -n "${remote_url}" ]]; then
+		log_debug "Enabling LFS lock verification for ${remote_url}"
+		git config "lfs.${remote_url}/info/lfs.locksverify" true 2>/dev/null || true
+	fi
 	
 	# Track large file types commonly found in firmware
 	local lfs_patterns=(
@@ -456,7 +463,7 @@ function git_upload_dump() {
 	
 	# Step 2: Initialize LFS if requested
 	if [[ "${use_lfs}" == "true" ]]; then
-		git_lfs_init "${repo_dir}"
+		git_lfs_init "${repo_dir}" "${remote_url}"
 	fi
 	
 	# Step 3: Split large files if needed

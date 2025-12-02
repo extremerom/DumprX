@@ -1851,6 +1851,16 @@ commit_and_push(){
 	log_step "Setting up Git LFS for large files"
 	git lfs install 2>/dev/null
 	
+	# Enable LFS lock verification if remote origin exists
+	if git remote get-url origin &>/dev/null; then
+		local remote_url
+		remote_url=$(git remote get-url origin 2>/dev/null)
+		if [[ -n "${remote_url}" ]]; then
+			log_debug "Enabling LFS lock verification for ${remote_url}"
+			git config "lfs.${remote_url}/info/lfs.locksverify" true 2>/dev/null || true
+		fi
+	fi
+	
 	# Track common large file types
 	local lfs_patterns=(
 		"*.so"
