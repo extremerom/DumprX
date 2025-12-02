@@ -2259,8 +2259,8 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 		fi
 		
 		# For user namespaces, create project directly without subgroups
-		# Project name will be in format: brand_codename (e.g., xiaomi_miatoll)
-		PROJECT_NAME="${brand}_${codename}"
+		# Project name will be in format: brand_codename_dump (e.g., samsung_dm2q_dump)
+		PROJECT_NAME="${brand}_${codename}_dump"
 		PROJECT_PATH=$(echo "${PROJECT_NAME}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
 		
 		log_info "Creating project ${PROJECT_PATH} in user namespace ${GIT_ORG}"
