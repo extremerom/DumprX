@@ -61,10 +61,11 @@ function _usage() {
 	echo "  Supported File Formats:"
 	echo "    *.zip | *.rar | *.7z | *.tar | *.tar.gz | *.tgz | *.tar.md5"
 	echo "    *.ozip | *.ofp | *.ops | *.kdz | ruu_*exe"
-	echo "    system.new.dat | system.new.dat.br | system.new.dat.xz"
+	echo "    system.new.dat | system.new.dat.br | system.new.dat.zst | system.new.dat.xz"
 	echo "    system.new.img | system.img | system-sign.img | UPDATE.APP"
 	echo "    *.emmc.img | *.img.ext4 | system.bin | system-p | payload.bin"
 	echo "    *.nb0 | .*chunk* | *.pac | *super*.img | *system*.sin"
+	echo "    *romfs* | *logo*.img | resource.img (Rockchip) | *.cpio"
 	echo ""
 	echo "  Options:"
 	echo "    --verbose, -v     Enable verbose (debug) logging"
@@ -228,10 +229,13 @@ OFP_QC_DECRYPT="${UTILSDIR}"/oppo_decrypt/ofp_qc_decrypt.py
 OFP_MTK_DECRYPT="${UTILSDIR}"/oppo_decrypt/ofp_mtk_decrypt.py
 OPSDECRYPT="${UTILSDIR}"/oppo_decrypt/opscrypto.py
 LPUNPACK="${UTILSDIR}"/lpunpack
+LPUNPACK_PY="${UTILSDIR}"/lpunpack_tool.py
 SPLITUAPP="${UTILSDIR}"/splituapp.py
 PACEXTRACTOR="${UTILSDIR}"/pacextractor/python/pacExtractor.py
+UNPAC_PY="${UTILSDIR}"/unpac_tool.py
 NB0_EXTRACT="${UTILSDIR}"/nb0-extract
 KDZ_EXTRACT="${UTILSDIR}"/kdztools/unkdz.py
+KDZ_UNPACK_PY="${UTILSDIR}"/kdz_unpack.py
 DZ_EXTRACT="${UTILSDIR}"/kdztools/undz.py
 RUUDECRYPT="${UTILSDIR}"/RUU_Decrypt_Tool
 EXTRACT_IKCONFIG="${UTILSDIR}"/extract-ikconfig
@@ -242,6 +246,19 @@ RK_EXTRACT="${UTILSDIR}"/bin/rkImageMaker
 TRANSFER="${UTILSDIR}"/bin/transfer
 OMCDECODER="${UTILSDIR}"/omcdecoder.py
 OMCDECODER_BIN="${UTILSDIR}"/bin/omcdecoder
+OZIP_DECRYPT_PY="${UTILSDIR}"/ozip_decrypt.py
+EXT4_EXTRACT_PY="${UTILSDIR}"/ext4_extract.py
+PAYLOAD_EXTRACT_PY="${UTILSDIR}"/payload_extract_tool.py
+CPIO_TOOL_PY="${UTILSDIR}"/cpio_tool.py
+BROTLI="${UTILSDIR}"/bin/brotli
+EXTRACT_EROFS="${UTILSDIR}"/bin/extract.erofs
+MKFS_EROFS="${UTILSDIR}"/bin/mkfs.erofs
+ZSTD="${UTILSDIR}"/bin/zstd
+# Additional Python modules for advanced operations
+FSPATCH_PY="${UTILSDIR}"/core/fspatch.py
+CONTEXTPATCH_PY="${UTILSDIR}"/core/contextpatch.py
+ROMFS_PARSE_PY="${UTILSDIR}"/core/romfs_parse.py
+RSCEUTIL_PY="${UTILSDIR}"/core/rsceutil.py
 
 if ! command -v 7zz > /dev/null 2>&1; then
 	BIN_7ZZ="${UTILSDIR}"/bin/7zz
@@ -390,23 +407,60 @@ cd "${PROJECT_DIR}/" || exit
 # Function for Extracting Super Images
 function superimage_extract() {
 	log_step "Extracting partitions from Super image"
-	if [ -f super.img ]; then
-		log_debug "Converting sparse super image to raw"
-		${SIMG2IMG} super.img super.img.raw 2>/dev/null
-	fi
-	if [[ ! -s super.img.raw ]] && [ -f super.img ]; then
-		mv super.img super.img.raw
-	fi
-	for partition in $PARTITIONS; do
-		($LPUNPACK --partition="$partition"_a super.img.raw || $LPUNPACK --partition="$partition" super.img.raw) 2>/dev/null
-		if [ -f "$partition"_a.img ]; then
-			mv "$partition"_a.img "$partition".img
+	
+	local super_img="super.img"
+	local super_raw="super.img.raw"
+	
+	# Convert sparse image to raw if needed
+	if [ -f "${super_img}" ]; then
+		log_debug "Checking if super image is sparse"
+		if file "${super_img}" | grep -q "Android sparse image"; then
+			log_info "Converting sparse super image to raw"
+			${SIMG2IMG} "${super_img}" "${super_raw}" 2>/dev/null
 		else
-			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep "$partition".img)
-			${BIN_7ZZ} e -y "${FILEPATH}" "$foundpartitions" dummypartition 2>/dev/null >> "$TMPDIR"/zip.log
+			log_debug "Super image is not sparse, using as-is"
+			cp "${super_img}" "${super_raw}" 2>/dev/null || mv "${super_img}" "${super_raw}"
+		fi
+	fi
+	
+	# Ensure we have the raw image
+	if [[ ! -f "${super_raw}" ]]; then
+		log_error "Super image not found or conversion failed"
+		return 1
+	fi
+	
+	# Try Python lpunpack tool first (preferred method - from MIO-KITCHEN)
+	if [[ -f "${LPUNPACK_PY}" ]] && command -v python3 &>/dev/null; then
+		log_info "Using Python lpunpack tool for extraction"
+		if python3 "${LPUNPACK_PY}" "${super_raw}" -o . 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "Python lpunpack extraction completed"
+			rm -rf "${super_raw}"
+			return 0
+		else
+			log_warn "Python lpunpack failed, falling back to binary lpunpack"
+		fi
+	fi
+	
+	# Fallback to binary lpunpack (original method)
+	log_info "Using binary lpunpack for extraction"
+	for partition in $PARTITIONS; do
+		log_debug "Extracting partition: ${partition}"
+		($LPUNPACK --partition="${partition}"_a "${super_raw}" || $LPUNPACK --partition="${partition}" "${super_raw}") 2>/dev/null
+		
+		# Handle _a suffix partitions
+		if [ -f "${partition}"_a.img ]; then
+			mv "${partition}"_a.img "${partition}".img
+		elif [ ! -f "${partition}".img ]; then
+			# Try to extract from original archive as fallback
+			log_debug "Partition ${partition} not found in super, trying original archive"
+			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" 2>/dev/null | rev | gawk '{ print $1 }' | rev | grep "${partition}".img)
+			if [[ -n "${foundpartitions}" ]]; then
+				${BIN_7ZZ} e -y "${FILEPATH}" "${foundpartitions}" 2>/dev/null >> "$TMPDIR"/zip.log
+			fi
 		fi
 	done
-	rm -rf super.img.raw
+	
+	rm -rf "${super_raw}"
 	log_success "Super image extraction completed"
 }
 
@@ -488,47 +542,61 @@ function extract_with_7z() {
 	fi
 }
 
-# Extract partition using fsck.erofs
+# Extract partition using fsck.erofs or extract.erofs
 function extract_with_erofs() {
 	local partition="$1"
 	local img_file="$2"
 	local output_dir="$3"
 	
-	log_debug "Attempting extraction with fsck.erofs..."
-	
-	# Check if fsck.erofs is available and functional
-	if ! command -v "${FSCK_EROFS}" >/dev/null 2>&1; then
-		log_debug "fsck.erofs not found"
-		return 1
-	fi
+	log_debug "Attempting extraction with erofs tools..."
 	
 	# Create output directory
 	mkdir -p "${output_dir}" 2>/dev/null
 	
-	# Try extraction with timeout to prevent hanging
-	local extract_output
-	extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
-	local extract_status=$?
+	# Try extract.erofs first (from MIO-KITCHEN, newer tool)
+	if [[ -x "${EXTRACT_EROFS}" ]]; then
+		log_debug "Using extract.erofs for EROFS extraction"
+		local extract_output
+		extract_output=$(timeout 300 "${EXTRACT_EROFS}" -x -o "${output_dir}" "${img_file}" 2>&1)
+		local extract_status=$?
+		
+		if [[ ${extract_status} -eq 0 ]]; then
+			if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+				log_debug "Successfully extracted with extract.erofs"
+				return 0
+			fi
+		elif [[ ${extract_status} -eq 124 ]]; then
+			log_warn "extract.erofs timed out after 5 minutes"
+		fi
+	fi
 	
-	# Check if extraction was successful
-	if [[ ${extract_status} -eq 0 ]]; then
-		# Verify that files were actually extracted
-		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
-			log_debug "Successfully extracted with fsck.erofs"
-			return 0
+	# Fallback to fsck.erofs (original method)
+	if command -v "${FSCK_EROFS}" >/dev/null 2>&1; then
+		log_debug "Using fsck.erofs for EROFS extraction"
+		local extract_output
+		extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
+		local extract_status=$?
+		
+		if [[ ${extract_status} -eq 0 ]]; then
+			if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+				log_debug "Successfully extracted with fsck.erofs"
+				return 0
+			else
+				log_warn "fsck.erofs completed but no files extracted"
+				return 1
+			fi
+		elif [[ ${extract_status} -eq 124 ]]; then
+			log_warn "fsck.erofs extraction timed out after 5 minutes"
+			return 1
 		else
-			log_warn "fsck.erofs completed but no files extracted"
+			log_debug "fsck.erofs extraction failed with status ${extract_status}"
+			echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
 			return 1
 		fi
-	elif [[ ${extract_status} -eq 124 ]]; then
-		log_warn "fsck.erofs extraction timed out after 5 minutes"
-		return 1
-	else
-		log_debug "fsck.erofs extraction failed with status ${extract_status}"
-		# Show relevant error messages only
-		echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
-		return 1
 	fi
+	
+	log_debug "No EROFS extraction tool available"
+	return 1
 }
 
 # Extract partition using mount loop
@@ -1017,8 +1085,20 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 				rm -rf "$i"
 			fi
 			if [[ "$i" =~ \.dat\.br$ ]]; then
-				log_debug "Converting brotli ${line} dat to normal"
-				brotli -d "$i"
+				log_debug "Decompressing brotli ${line} dat to normal"
+				if [[ -x "${BROTLI}" ]]; then
+					"${BROTLI}" -d "$i"
+				else
+					brotli -d "$i"
+				fi
+				rm -f "$i"
+			elif [[ "$i" =~ \.dat\.zst$ ]]; then
+				log_debug "Decompressing zstd ${line} dat to normal"
+				if [[ -x "${ZSTD}" ]]; then
+					"${ZSTD}" -d "$i"
+				else
+					zstd -d "$i"
+				fi
 				rm -f "$i"
 			fi
 			if [[ "$i" =~ \.new\.dat$ ]]; then
@@ -1130,6 +1210,17 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".pac$" 2>/dev/null || [[ $(find "${T
 	pac_list=$(find . -type f -name "*.pac" | cut -d'/' -f'2-' | sort)
 	log_info "Extracting $(echo "${pac_list}" | wc -l) PAC file(s)..."
 	for file in ${pac_list}; do
+		# Try Python unpac tool first (SPRD PAC from MIO-KITCHEN)
+		if [[ -f "${UNPAC_PY}" ]] && command -v python3 &>/dev/null; then
+			log_debug "Trying Python unpac tool for ${file}"
+			if python3 "${UNPAC_PY}" "${file}" -o "$(pwd)" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+				log_success "Python unpac extraction completed for ${file}"
+				continue
+			else
+				log_warn "Python unpac failed, falling back to PACEXTRACTOR"
+			fi
+		fi
+		# Fallback to original PACEXTRACTOR
 		python3 "${PACEXTRACTOR}" "${file}" "$(pwd)"
 	done
 	if [[ -f super.img ]]; then
@@ -1274,9 +1365,26 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep tar.md5 | gawk '{print $NF}' | grep -
 	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q payload.bin 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "payload.bin" | wc -l) -ge 1 ]]; then
 	log_step "AB OTA payload.bin detected"
-	log_info "Extracting payload using $(nproc --all) CPU cores..."
-	${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" "${FILEPATH}" >/dev/null
-	log_success "Payload extraction completed"
+	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x "${FILEPATH}" payload.bin 2>/dev/null >> "${TMPDIR}"/zip.log
+	find "${TMPDIR}" -type f -name "payload.bin" -exec mv {} . \;
+	
+	# Try Python payload extractor first (from MIO-KITCHEN)
+	if [[ -f "${PAYLOAD_EXTRACT_PY}" ]] && command -v python3 &>/dev/null; then
+		log_info "Using Python payload extractor..."
+		if python3 "${PAYLOAD_EXTRACT_PY}" payload.bin -o . 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "Python payload extraction completed"
+		else
+			log_warn "Python payload extractor failed, falling back to payload-dumper-go"
+			log_info "Extracting payload using $(nproc --all) CPU cores..."
+			${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" payload.bin >/dev/null
+			log_success "Payload extraction completed"
+		fi
+	else
+		# Fallback to payload-dumper-go
+		log_info "Extracting payload using $(nproc --all) CPU cores..."
+		${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" payload.bin >/dev/null
+		log_success "Payload extraction completed"
+	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".*.rar\|.*.zip\|.*.7z\|.*.tar$" 2>/dev/null || [[ $(find "${TMPDIR}" -type f \( -name "*.rar" -o -name "*.zip" -o -name "*.7z" -o -name "*.tar" \) | wc -l) -ge 1 ]]; then
 	log_step "Compressed archive firmware detected"
 	if [[ -f "${FILEPATH}" ]]; then
@@ -1314,11 +1422,82 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "UPDATE.APP" 2>/dev/null || [[ $(f
 	fi
 	superimage_extract || exit 1
 	log_success "UPDATE.APP extraction completed"
+elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "romfs\|ROMFS" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "*romfs*" -o -name "*ROMFS*" | wc -l) -ge 1 ]]; then
+	log_step "ROMFS filesystem detected"
+	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
+	
+	# Find ROMFS files
+	romfs_files=$(find "${TMPDIR}" -type f -name "*romfs*" -o -name "*ROMFS*")
+	
+	if [[ -n "${romfs_files}" ]]; then
+		log_info "Extracting ROMFS filesystem(s)..."
+		for romfs_file in ${romfs_files}; do
+			if [[ -f "${ROMFS_PARSE_PY}" ]] && command -v python3 &>/dev/null; then
+				output_dir=$(basename "${romfs_file}" | sed 's/\.[^.]*$//')
+				log_debug "Parsing ROMFS file: ${romfs_file}"
+				python3 -c "
+import sys
+sys.path.insert(0, '${UTILSDIR}')
+from core.romfs_parse import RomfsParse
+parser = RomfsParse('${romfs_file}')
+parser.parse()
+parser.extract('${output_dir}')
+print(f'ROMFS extracted to ${output_dir}')
+" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"
+			else
+				log_warn "ROMFS parser not available, skipping ${romfs_file}"
+			fi
+		done
+		log_success "ROMFS extraction completed"
+	else
+		log_warn "No ROMFS files found"
+	fi
+elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -qi "logo.img\|LOGO.IMG" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -iname "*logo*.img" | wc -l) -ge 1 ]]; then
+	log_step "Logo image detected"
+	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
+	
+	# Find logo image files
+	logo_files=$(find "${TMPDIR}" -type f -iname "*logo*.img")
+	
+	if [[ -n "${logo_files}" ]]; then
+		log_info "Found logo image file(s)"
+		for logo_file in ${logo_files}; do
+			log_debug "Logo image: ${logo_file}"
+			# Logo images are typically just image containers
+			# They can be extracted with 7z or specific tools
+			output_dir=$(basename "${logo_file}" | sed 's/\.[^.]*$//')_extracted
+			mkdir -p "${output_dir}"
+			
+			# Try to extract with 7z first
+			if ${BIN_7ZZ} x -y "${logo_file}" -o"${output_dir}/" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+				log_success "Logo image extracted to ${output_dir}"
+			else
+				log_warn "Could not extract ${logo_file} with 7z, copying as-is"
+				cp "${logo_file}" .
+			fi
+		done
+		log_success "Logo image processing completed"
+	else
+		log_warn "No logo image files found"
+	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "rockchip" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "rockchip") ]]; then
 	log_step "Rockchip firmware detected"
 	log_info "Extracting Rockchip firmware..."
 	${RK_EXTRACT} -unpack "${FILEPATH}" ${TMPDIR}
 	${AFPTOOL_EXTRACT} -unpack ${TMPDIR}/firmware.img ${TMPDIR}
+	
+	# Check for Rockchip resource images
+	if [[ -f "${TMPDIR}/resource.img" ]] && [[ -f "${RSCEUTIL_PY}" ]] && command -v python3 &>/dev/null; then
+		log_info "Extracting Rockchip resource image..."
+		python3 -c "
+import sys
+sys.path.insert(0, '${UTILSDIR}')
+from core.rsceutil import unpack
+unpack('${TMPDIR}/resource.img', '${TMPDIR}/resource_extracted', None)
+print('Rockchip resource image extracted')
+" 2>&1 | tee -a "${DUMPRX_LOG_FILE}" || log_debug "Resource extraction failed or not needed"
+	fi
+	
 	[ -f ${TMPDIR}/Image/super.img ] && {
 		mv ${TMPDIR}/Image/super.img ${TMPDIR}/super.img
 		cd ${TMPDIR}
@@ -1336,7 +1515,19 @@ fi
 if [[ "${EXTENSION}" == "pac" ]]; then
 	log_step "PAC archive detected"
 	log_info "Extracting PAC archive..."
-	python3 ${PACEXTRACTOR} ${FILEPATH} $(pwd)
+	# Try Python unpac tool first (SPRD PAC from MIO-KITCHEN)
+	if [[ -f "${UNPAC_PY}" ]] && command -v python3 &>/dev/null; then
+		log_debug "Trying Python unpac tool"
+		if python3 "${UNPAC_PY}" "${FILEPATH}" -o "$(pwd)" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "Python unpac extraction completed"
+		else
+			log_warn "Python unpac failed, falling back to PACEXTRACTOR"
+			python3 ${PACEXTRACTOR} ${FILEPATH} $(pwd)
+		fi
+	else
+		# Fallback to original PACEXTRACTOR
+		python3 ${PACEXTRACTOR} ${FILEPATH} $(pwd)
+	fi
 	superimage_extract || exit 1
 	log_success "PAC extraction completed"
 	exit
@@ -1401,6 +1592,29 @@ extract_boot_image "vendor_boot"
 extract_boot_image "recovery"
 extract_boot_image "init_boot"
 extract_boot_image "vendor_kernel_boot"
+
+# Extract CPIO ramdisks if present
+log_step "Checking for CPIO ramdisks"
+ramdisk_files=$(find . -maxdepth 2 -type f -name "*ramdisk*" -o -name "*.cpio" 2>/dev/null)
+
+if [[ -n "${ramdisk_files}" ]] && [[ -f "${CPIO_TOOL_PY}" ]] && command -v python3 &>/dev/null; then
+	log_info "Found CPIO ramdisk file(s), extracting..."
+	for ramdisk in ${ramdisk_files}; do
+		# Skip if it's a directory
+		[[ -d "${ramdisk}" ]] && continue
+		
+		output_dir=$(dirname "${ramdisk}")/$(basename "${ramdisk}" | sed 's/\.[^.]*$//')_extracted
+		log_debug "Extracting ${ramdisk} to ${output_dir}"
+		
+		if python3 "${CPIO_TOOL_PY}" -x "${ramdisk}" -o "${output_dir}" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "CPIO ramdisk extracted: ${ramdisk}"
+		else
+			log_debug "Could not extract ${ramdisk} (may not be CPIO format)"
+		fi
+	done
+else
+	log_debug "No CPIO ramdisks found or CPIO tool not available"
+fi
 
 # Extract DTBO
 extract_dtbo_image
