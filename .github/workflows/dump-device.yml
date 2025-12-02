@@ -72,7 +72,14 @@ jobs:
             REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||' | sed 's|git@github.com:||' | sed 's|\.git$||')
           elif [[ "$PLATFORM" == "gitlab" ]]; then
             # Extract GitLab instance domain
-            GITLAB_DOMAIN=$(echo "$REPO_URL" | sed -E 's|^(https?://|git@)||' | sed -E 's|([^/:]+).*|\1|')
+            # First, remove protocol prefix (https://, http://, or git@)
+            TEMP_URL="$REPO_URL"
+            TEMP_URL="${TEMP_URL#https://}"
+            TEMP_URL="${TEMP_URL#http://}"
+            TEMP_URL="${TEMP_URL#git@}"
+            
+            # Extract domain (everything before first : or /)
+            GITLAB_DOMAIN=$(echo "$TEMP_URL" | sed -E 's|[:/].*||')
             echo "gitlab_instance=${GITLAB_DOMAIN}" >> $GITHUB_OUTPUT
             echo "Extracted GitLab instance: ${GITLAB_DOMAIN}"
 
