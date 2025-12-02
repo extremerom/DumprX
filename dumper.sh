@@ -2088,21 +2088,7 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	# Use improved git configuration from git_upload library
 	if declare -F git_configure_large_repo >/dev/null; then
 		git_configure_large_repo "." || log_warn "Could not configure git optimally"
-	else
-		# Fallback to basic configuration
-		git config http.postBuffer 524288000
-		git config http.lowSpeedLimit 0
-		git config http.lowSpeedTime 999999
-		git config pack.windowMemory 256m
-		git config pack.packSizeLimit 256m
-		git config core.compression 0
 	fi
-	
-	# Additional optimizations for GitHub
-	git config http.version HTTP/1.1
-	git config http.retryDelay 5
-	git config http.retries 10
-	git config core.bigFileThreshold 50m
 	
 	# Validate branch name before checkout
 	if [[ -z "${branch}" ]]; then
@@ -2210,13 +2196,6 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
 	git init		# Insure Your GitLab Authorization Before Running This Script
-	# Configure git for better handling of large repositories and network issues
-	git config http.postBuffer 524288000		# A Simple Tuning to Get Rid of curl (18) error while `git push`
-	git config http.lowSpeedLimit 0			# Disable low speed limit
-	git config http.lowSpeedTime 999999		# Increase timeout
-	git config pack.windowMemory 256m			# Reduce memory usage during pack
-	git config pack.packSizeLimit 256m		# Limit pack file size
-	git config core.compression 0				# Disable compression for speed
 	
 	# Validate branch name before checkout
 	if [[ -z "${branch}" ]]; then

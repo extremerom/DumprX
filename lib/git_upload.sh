@@ -20,31 +20,6 @@ function git_configure_large_repo() {
 	
 	cd "${repo_dir}" || return 1
 	
-	# Increase buffer sizes
-	git config http.postBuffer 524288000        # 500MB
-	git config http.maxRequestBuffer 524288000  # 500MB
-	
-	# Timeout settings
-	git config http.lowSpeedLimit 0
-	git config http.lowSpeedTime 999999
-	
-	# Pack settings to reduce memory usage
-	git config pack.windowMemory 256m
-	git config pack.packSizeLimit 256m
-	git config pack.deltaCacheSize 128m
-	git config pack.threads 1
-	
-	# Compression settings
-	git config core.compression 0
-	git config core.looseCompression 0
-	
-	# Large file settings
-	git config core.bigFileThreshold 50m
-	
-	# Network retry settings
-	git config http.retryDelay 5
-	git config http.retries 10
-	
 	log_success "Git configured for large repository"
 }
 
@@ -302,12 +277,9 @@ function git_push_with_retry() {
 		elif grep -q "HTTP 500" /tmp/git_push_$$.log || grep -q "HTTP 502" /tmp/git_push_$$.log || grep -q "HTTP 503" /tmp/git_push_$$.log; then
 			log_warn "Server error detected, will retry"
 		elif grep -q "larger than.*http.postBuffer" /tmp/git_push_$$.log; then
-			log_warn "Buffer size issue, increasing buffer"
-			git config http.postBuffer 1048576000  # Increase to 1GB
+			log_warn "Buffer size issue detected, will retry"
 		elif grep -q "RPC failed" /tmp/git_push_$$.log; then
-			log_warn "RPC failed, trying alternative method"
-			# Try pushing with shallow clone
-			git config http.version HTTP/1.1
+			log_warn "RPC failed, will retry"
 		elif grep -q "failed to push some refs" /tmp/git_push_$$.log; then
 			log_warn "Push rejected - checking for diverged history"
 			# Try force with lease for safety
@@ -362,9 +334,6 @@ function git_push_shallow() {
 	log_step "Attempting shallow push"
 	
 	cd "${repo_dir}" || return 1
-	
-	# Create a shallow clone
-	git config core.compression 9
 	
 	# Push with atomic and force-with-lease for safety
 	if git push --progress --atomic "${remote}" "${branch}"; then
