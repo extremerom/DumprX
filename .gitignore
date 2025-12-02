@@ -18,3 +18,7 @@ utils/pacextractor
 *.log
 dumprx.log
 .dumprx.conf
+# Backup files
+*.old
+*.bak
+*.backup

@@ -30,6 +30,38 @@ You might've used firmware extractor via dumpyara from https://github.com/Androi
 - [x] **NEW**: Enhanced error handling and retry logic
 - [x] **NEW**: Checksum verification for downloads
 - [x] **NEW**: Samsung OMC decoder for automatic decryption of optics partition XML files
+- [x] **NEW**: Integrated MIO-KITCHEN UNPACK modules for enhanced firmware extraction
+  - Python-based lpunpack for super partition unpacking
+  - Enhanced EROFS extraction with extract.erofs
+  - Improved EXT4, sparse image, and CPIO handling
+  - Advanced payload extraction capabilities
+  - Better KDZ/DZ tools with improved compatibility
+
+## MIO-KITCHEN Integration
+
+DumprX now includes advanced unpacking modules from [MIO-KITCHEN-SOURCE](https://github.com/ColdWindScholar/MIO-KITCHEN-SOURCE), providing:
+
+- **Enhanced Super Partition Support**: Python-based lpunpack for better compatibility
+- **Advanced EROFS Tools**: Latest extract.erofs and mkfs.erofs binaries
+- **Improved Image Handling**: Better support for EXT4, sparse images, and CPIO archives
+- **SPRD PAC Support**: Enhanced unpacking for Spreadtrum firmware
+- **OTA Payload**: Python-based payload extraction with zstd support
+- **Amlogic Support**: Amlogic V2 image unpacking capability
+
+### Python Dependencies
+
+The enhanced features require Python packages. Install them using:
+
+```bash
+pip3 install -r requirements.txt
+```
+
+Required packages:
+- protobuf (for metadata parsing)
+- requests (for HTTP operations)
+- zstandard (for compression)
+- pycryptodome (for encryption/decryption)
+- six (for compatibility)
 
 ## Recommendations before Playing with Firmware Dumper
 
@@ -130,8 +162,8 @@ Credit for those tools goes to everyone whosoever worked hard to put all those p
 
 ## Internal Utilities Credits
 
-- sdat2img.py (system-dat-to-img v1.2, python script)
-  - by @xpirt, @luxi78, @howellzhu
+- sdat2img.py (system-dat-to-img, python wrapper for MIO-KITCHEN core)
+  - Original by @xpirt, @luxi78, @howellzhu; Enhanced with MIO-KITCHEN integration
 - simg2img (Android sparse-to-raw images converter, binary built from source)
   - by @anestisb
 - unsin (Xperia Firmware Unpacker v1.13, binary)
@@ -150,16 +182,17 @@ Credit for those tools goes to everyone whosoever worked hard to put all those p
   - by @bkerler
 - opscrypto.py (OnePlus/Oppo ops firmware extractor, python script)
   - by @bkerler
-- lpunpack (OnePlus/Other super.img unpacker, binary built from source)
-  - by @LonelyFool
-- splituapp.py (UPDATE.APP extractor, python script)
-  - by @superr
+- lpunpack (Python-based super.img unpacker with binary fallback)
+  - Python version from MIO-KITCHEN, original binary by @LonelyFool
+- splituapp.py (UPDATE.APP extractor, python wrapper for MIO-KITCHEN core)
+  - Original by @superr; Enhanced with MIO-KITCHEN integration
 - pacextractor (Extractor of SpreadTrum firmware files with extension pac. See)
   - by @HemanthJabalpuri
 - nb0-extract (Nokia/Sharp/Infocus/Essential nb0-extract, binary built from source)
   - by Heineken @Eddie07 / "FIH mobile"
-- kdztools' unkdz.py and undz.py (LG KDZ and DZ Utilities, python scripts)
-  - Originally by IOMonster (thecubed on XDA), Modified by @ehem (Elliott Mitchell) and improved by @steadfasterX
+- kdztools' unkdz.py and undz.py (LG KDZ and DZ Utilities, enhanced python wrappers)
+  - Originally by IOMonster (thecubed on XDA), Modified by @ehem (Elliott Mitchell), improved by @steadfasterX
+  - Enhanced with MIO-KITCHEN core modules
 - RUU\_Decrypt\_Tool (HTC RUU/ROM Decryption Tool v3.6.8, binary)
   - by @nkk71 and @CaptainThrowback
 - extract-ikconfig (.config file extractor from kernel image, shell script)
@@ -169,4 +202,28 @@ Credit for those tools goes to everyone whosoever worked hard to put all those p
 - twrpdtgen by @SebaUbuntu
 - OMCDecoder (Samsung OMC/CSC XML decoder, C++ binary)
   - by @soulr344, uses gzip-hpp by @mapbox
+
+## MIO-KITCHEN Integration Credits
+
+DumprX integrates core unpacking modules from [MIO-KITCHEN-SOURCE](https://github.com/ColdWindScholar/MIO-KITCHEN-SOURCE):
+
+- **lpunpack.py** - Python-based super partition unpacker
+  - Based on unix3dgforce's lpunpack implementation
+- **ext4.py** - Enhanced EXT4 image parser and extractor
+  - Based on cubinator's ext4 implementation
+- **sparse_img.py** - Improved sparse image handling
+- **cpio.py** - CPIO archive unpacker/repacker
+  - by @ColdWindScholar
+- **payload_extract.py** - Advanced OTA payload extractor
+- **unpac.py** - SPRD PAC firmware unpacker
+  - by @Affggh
+- **blockimgdiff.py**, **merge_sparse.py**, **rangelib.py** - Image conversion utilities
+- **aml_image.py** - Amlogic V2 image support
+  - by @ColdWindScholar
+- **Enhanced KDZ/DZ tools** - Improved LG firmware support
+- **EROFS tools** - Updated extract.erofs and mkfs.erofs binaries
+  - by @sekaiacg
+- **Additional binaries**: brotli, lpmake, make_ext4fs, e2fsdroid, mke2fs
+
+Special thanks to the [MIO-KITCHEN-SOURCE](https://github.com/ColdWindScholar/MIO-KITCHEN-SOURCE) project and all contributors for their excellent work on firmware manipulation tools.
 
