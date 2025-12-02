@@ -61,32 +61,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "GitHub Actions Bot"
 
-      - name: Setup GitHub token
-        if: inputs.platform == 'github'
-        run: |
-          echo "${GITHUB_TOKEN}" > .github_token
-        env:
-          GITHUB_TOKEN: ${{ inputs.github_token }}
-
-      - name: Setup GitLab credentials
-        if: inputs.platform == 'gitlab'
-        run: |
-          echo "${GITLAB_TOKEN}" > .gitlab_token
-
-          # Setup SSH key for GitLab
-          mkdir -p ~/.ssh
-          echo "${GITLAB_SSH_KEY}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-          # Add GitLab to known hosts
-          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
-
-          # Setup Git to use SSH
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=~/.ssh/known_hosts"
-        env:
-          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-          GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
-
       - name: Extract organization name from repo URL
         id: extract_org
         run: |
@@ -97,7 +71,13 @@ jobs:
           if [[ "$PLATFORM" == "github" ]]; then
             REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||' | sed 's|git@github.com:||' | sed 's|\.git$||')
           elif [[ "$PLATFORM" == "gitlab" ]]; then
-            REPO_PATH=$(echo "$REPO_URL" | sed 's|https://gitlab.com/||' | sed 's|http://gitlab.com/||' | sed 's|git@gitlab.com:||' | sed 's|\.git$||')
+            # Extract GitLab instance domain
+            GITLAB_DOMAIN=$(echo "$REPO_URL" | sed -E 's|^(https?://|git@)||' | sed -E 's|([^/:]+).*|\1|')
+            echo "gitlab_instance=${GITLAB_DOMAIN}" >> $GITHUB_OUTPUT
+            echo "Extracted GitLab instance: ${GITLAB_DOMAIN}"
+            
+            # Extract repository path (remove domain and protocol)
+            REPO_PATH=$(echo "$REPO_URL" | sed "s|https://${GITLAB_DOMAIN}/||" | sed "s|http://${GITLAB_DOMAIN}/||" | sed "s|git@${GITLAB_DOMAIN}:||" | sed 's|\.git$||')
           fi
 
           # Get organization/user name (first part before /)
@@ -105,13 +85,65 @@ jobs:
           echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
           echo "Extracted organization name: $ORG_NAME for platform: $PLATFORM"
 
+      - name: Setup GitHub token
+        if: inputs.platform == 'github'
+        run: |
+          # Save token in project root for dumper.sh to find it
+          echo "${GITHUB_TOKEN}" > "${GITHUB_WORKSPACE}/.github_token"
+        env:
+          GITHUB_TOKEN: ${{ inputs.github_token }}
+
+      - name: Setup GitLab credentials
+        if: inputs.platform == 'gitlab'
+        run: |
+          # Save token in project root for dumper.sh to find it
+          echo "${GITLAB_TOKEN}" > "${GITHUB_WORKSPACE}/.gitlab_token"
+
+          # Setup SSH key for GitLab
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Save SSH key with proper formatting (handle multiline key)
+          echo "${GITLAB_SSH_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          # Determine GitLab instance from the extracted value or use default
+          GITLAB_INSTANCE="${{ steps.extract_org.outputs.gitlab_instance }}"
+          if [[ -z "${GITLAB_INSTANCE}" ]]; then
+            GITLAB_INSTANCE="gitlab.com"
+          fi
+          echo "Using GitLab instance: ${GITLAB_INSTANCE}"
+
+          # Add GitLab instance to known hosts
+          ssh-keyscan "${GITLAB_INSTANCE}" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+
+          # Start ssh-agent and add the key
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa
+
+          # Setup Git to use SSH
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=accept-new"
+          
+          # Test SSH connection
+          ssh -T git@${GITLAB_INSTANCE} 2>&1 | grep -q "Welcome to GitLab" || echo "SSH connection test failed, but continuing..."
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
+
       - name: Setup organization name and platform
         run: |
-          echo "${{ steps.extract_org.outputs.org_name }}" > .github_orgname
+          echo "${{ steps.extract_org.outputs.org_name }}" > "${GITHUB_WORKSPACE}/.github_orgname"
 
-          # For GitLab, also setup group name
+          # For GitLab, also setup group name and instance
           if [[ "${{ inputs.platform }}" == "gitlab" ]]; then
-            echo "${{ steps.extract_org.outputs.org_name }}" > .gitlab_group
+            echo "${{ steps.extract_org.outputs.org_name }}" > "${GITHUB_WORKSPACE}/.gitlab_group"
+            
+            # Save GitLab instance if it's not the default gitlab.com
+            GITLAB_INSTANCE="${{ steps.extract_org.outputs.gitlab_instance }}"
+            if [[ -n "${GITLAB_INSTANCE}" ]] && [[ "${GITLAB_INSTANCE}" != "gitlab.com" ]]; then
+              echo "${GITLAB_INSTANCE}" > "${GITHUB_WORKSPACE}/.gitlab_instance"
+            fi
 
             # Setup PUSH_TO_GITLAB environment variable to persist across steps
             echo 'PUSH_TO_GITLAB=true' >> $GITHUB_ENV
