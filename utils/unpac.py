@@ -10,9 +10,8 @@ import os
 # Add the utils directory to the path  
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import the unpac module
-from core import unpac
-
 if __name__ == '__main__':
-    # The module will handle command line arguments
-    pass
+    # The core unpac module has __main__ code, so we run it as a module
+    import runpy
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'core'))
+    runpy.run_module('unpac', run_name='__main__', alter_sys=True)
