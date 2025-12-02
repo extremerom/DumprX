@@ -168,6 +168,7 @@ EXTERNAL_TOOLS=(
 	marin-m/vmlinux-to-elf
 	ShivamKumarJha/android_tools
 	HemanthJabalpuri/pacextractor
+	soulr344/OMCDecoder
 )
 
 for tool_slug in "${EXTERNAL_TOOLS[@]}"; do
@@ -183,6 +184,34 @@ for tool_slug in "${EXTERNAL_TOOLS[@]}"; do
 		log_debug "Tool ${tool_name} already exists"
 		if [[ "${DUMPRX_DRY_RUN}" != "true" ]]; then
 			git -C "${tool_path}" pull -q 2>/dev/null || log_debug "Could not update ${tool_name}"
+		fi
+	fi
+	
+	# Build OMCDecoder binary if it doesn't exist
+	if [[ "${tool_name}" == "OMCDecoder" ]] && [[ -d "${tool_path}" ]]; then
+		if [[ ! -f "${UTILSDIR}/bin/omcdecoder" ]] || [[ ! -x "${UTILSDIR}/bin/omcdecoder" ]]; then
+			log_info "Building OMCDecoder binary..."
+			if [[ "${DUMPRX_DRY_RUN}" != "true" ]]; then
+				if command -v clang++ >/dev/null 2>&1; then
+					(cd "${tool_path}" && clang++ -lz -I./include decoder.cpp -o omcdecoder 2>/dev/null) || log_warn "Failed to build OMCDecoder"
+					if [[ -f "${tool_path}/omcdecoder" ]]; then
+						cp "${tool_path}/omcdecoder" "${UTILSDIR}/bin/omcdecoder" 2>/dev/null
+						chmod +x "${UTILSDIR}/bin/omcdecoder" 2>/dev/null
+						log_success "OMCDecoder binary built successfully"
+					fi
+				elif command -v g++ >/dev/null 2>&1; then
+					(cd "${tool_path}" && g++ -lz -I./include decoder.cpp -o omcdecoder 2>/dev/null) || log_warn "Failed to build OMCDecoder"
+					if [[ -f "${tool_path}/omcdecoder" ]]; then
+						cp "${tool_path}/omcdecoder" "${UTILSDIR}/bin/omcdecoder" 2>/dev/null
+						chmod +x "${UTILSDIR}/bin/omcdecoder" 2>/dev/null
+						log_success "OMCDecoder binary built successfully"
+					fi
+				else
+					log_warn "No C++ compiler found, cannot build OMCDecoder"
+				fi
+			fi
+		else
+			log_debug "OMCDecoder binary already exists"
 		fi
 	fi
 done
@@ -216,6 +245,8 @@ AML_EXTRACT="${UTILSDIR}"/aml-upgrade-package-extract
 AFPTOOL_EXTRACT="${UTILSDIR}"/bin/afptool
 RK_EXTRACT="${UTILSDIR}"/bin/rkImageMaker
 TRANSFER="${UTILSDIR}"/bin/transfer
+OMCDECODER="${UTILSDIR}"/omcdecoder.py
+OMCDECODER_BIN="${UTILSDIR}"/bin/omcdecoder
 
 if ! command -v 7zz > /dev/null 2>&1; then
 	BIN_7ZZ="${UTILSDIR}"/bin/7zz
@@ -1407,6 +1438,24 @@ for q in *.img; do
 		rm -f "${q}" 2>/dev/null
 	fi
 done
+
+# Process optics partition if it exists (Samsung OMC decoder)
+if [[ -d "optics" ]]; then
+	log_step "Processing optics partition for OMC XML decryption"
+	if [[ -f "${OMCDECODER}" ]] && [[ -x "${OMCDECODER_BIN}" ]]; then
+		log_info "Decrypting OMC XML files in optics partition..."
+		python3 "${OMCDECODER}" "optics" --in-place --binary "${OMCDECODER_BIN}" 2>/dev/null
+		if [[ $? -eq 0 ]]; then
+			log_success "OMC XML files decrypted successfully"
+		else
+			log_warn "OMC decoder encountered issues, some files may not be decrypted"
+		fi
+	else
+		log_warn "OMC decoder not available, skipping XML decryption"
+		[[ ! -f "${OMCDECODER}" ]] && log_debug "OMC decoder script not found: ${OMCDECODER}"
+		[[ ! -x "${OMCDECODER_BIN}" ]] && log_debug "OMC decoder binary not found or not executable: ${OMCDECODER_BIN}"
+	fi
+fi
 
 # Oppo/Realme Devices Have Some Images In A Euclid Folder In Their Vendor and/or System, Extract Those For Props
 log_debug "Checking for Euclid images..."
