@@ -169,4 +169,15 @@ Credit for those tools goes to everyone whosoever worked hard to put all those p
 - twrpdtgen by @SebaUbuntu
 - OMCDecoder (Samsung OMC/CSC XML decoder, C++ binary)
   - by @soulr344, uses gzip-hpp by @mapbox
+- **Advanced UNPACK Module** (integrated from [MIO-KITCHEN-SOURCE](https://github.com/ColdWindScholar/MIO-KITCHEN-SOURCE))
+  - Comprehensive firmware unpacking capabilities including:
+    - lpunpack.py - Super partition image unpacker
+    - unpac.py - Spreadtrum PAC file extractor
+    - cpio.py - CPIO archive handler
+    - ext4.py - EXT4 filesystem parser
+    - payload_extract.py - OTA payload extractor
+    - Enhanced EROFS tools (extract.erofs, mkfs.erofs)
+    - Updated magiskboot, brotli, and sparse image tools
+  - See [UNPACK_INTEGRATION.md](UNPACK_INTEGRATION.md) for usage details
+  - See [INTEGRATION_SUMMARY.md](INTEGRATION_SUMMARY.md) for complete integration summary
 

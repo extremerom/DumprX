@@ -1,0 +1,22 @@
+# DumprX Requirements
+# Core dependencies for UNPACK module (from MIO-KITCHEN-SOURCE)
+
+# Encryption/Decryption
+pycryptodome>=3.19.1
+cryptography
+
+# Data formats
+protobuf>=5
+toml
+
+# Archive handling
+zstandard
+
+# Utilities
+six
+future
+lxml
+
+# Optional but recommended
+Pillow>=10.0.1
+Requests>=2.31.0

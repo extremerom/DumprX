@@ -14,7 +14,6 @@ __pycache__
 utils/oppo_*
 utils/vmlinux*
 utils/android_tools
-utils/pacextractor
 *.log
 dumprx.log
 .dumprx.conf
