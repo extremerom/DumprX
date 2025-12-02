@@ -846,7 +846,7 @@ if [[ $(head -c12 "${FILEPATH}" 2>/dev/null | tr -d '\0') == "OPPOENCRYPT!" ]] |
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	util_move "${INPUTDIR}/${FILE}" "${TMPDIR}/${FILE}" 2>/dev/null || util_copy "${FILEPATH}" "${TMPDIR}/${FILE}"
 	log_info "Decrypting ozip and creating zip archive"
-	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "${OZIPDECRYPT}" "${TMPDIR}/${FILE}"
+	python3 "${UTILSDIR}"/pylib/ozipdecrypt.py "${TMPDIR}/${FILE}"
 	util_mkdir "${INPUTDIR}"
 	util_remove "${INPUTDIR:?}"/*
 	if [[ -f "${FILE%.*}.zip" ]]; then
@@ -879,7 +879,7 @@ if [[ "${EXTENSION}" == "ops" ]]; then
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/"${FILE}" 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/"${FILE}"
 	log_info "Decrypting and extracting ops file..."
-	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "${OPSDECRYPT}" decrypt "${TMPDIR}"/"${FILE}"
+	python3 "${UTILSDIR}"/pylib/opscrypto.py decrypt "${TMPDIR}"/"${FILE}"
 	mkdir -p "${INPUTDIR}" 2>/dev/null && rm -rf -- "${INPUTDIR:?}"/* 2>/dev/null
 	mv "${TMPDIR}"/extract/* "${INPUTDIR}"/
 	rm -rf "${TMPDIR:?}"/*
@@ -907,10 +907,10 @@ if [[ "${EXTENSION}" == "ofp" ]]; then
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/"${FILE}" 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/"${FILE}"
 	log_info "Decrypting and extracting ofp file..."
-	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "$OFP_QC_DECRYPT" "${TMPDIR}"/"${FILE}" out
+	python3 "${UTILSDIR}"/pylib/ofp_qc_decrypt.py "${TMPDIR}"/"${FILE}" out
 	if [[ ! -f "${TMPDIR}"/out/boot.img || ! -f "${TMPDIR}"/out/userdata.img ]]; then
 		log_debug "Trying MTK decryption method..."
-		uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "$OFP_MTK_DECRYPT" "${TMPDIR}"/"${FILE}" out
+		python3 "${UTILSDIR}"/pylib/ofp_mtk_decrypt.py "${TMPDIR}"/"${FILE}" out
 		if [[ ! -f "${TMPDIR}"/out/boot.img || ! -f "${TMPDIR}"/out/userdata.img ]]; then
 			log_error "OFP decryption failed" && exit 1
 		fi
