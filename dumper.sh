@@ -2277,7 +2277,7 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 			EXISTING_RESPONSE=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/projects/${GIT_ORG}%2F${PROJECT_PATH}")
 			PROJECT_ID=$(echo "${EXISTING_RESPONSE}" | jq -r '.id')
 			
-			if [[ ! -z "${PROJECT_ID}" ]] && [[ "${PROJECT_ID}" != "null" ]]; then
+			if [[ -n "${PROJECT_ID}" ]] && [[ "${PROJECT_ID}" != "null" ]]; then
 				log_info "Using existing project with ID: ${PROJECT_ID}"
 			fi
 		fi
@@ -2337,7 +2337,7 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 		
 		# If we couldn't get PROJECT_ID from the search, use the one from creation
 		if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
-			if [[ ! -z "${CREATED_PROJECT_ID}" ]] && [[ "${CREATED_PROJECT_ID}" != "null" ]]; then
+			if [[ -n "${CREATED_PROJECT_ID}" ]] && [[ "${CREATED_PROJECT_ID}" != "null" ]]; then
 				PROJECT_ID="${CREATED_PROJECT_ID}"
 				log_info "Using project ID from creation response: ${PROJECT_ID}"
 			fi
