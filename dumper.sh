@@ -508,9 +508,14 @@ function extract_with_erofs() {
 	# Create output directory
 	mkdir -p "${output_dir}" 2>/dev/null
 	
+	# Inform user that extraction is in progress (may take a while)
+	log_info "Extracting EROFS partition (this may take several minutes)..."
+	
 	# Try extraction with timeout to prevent hanging
-	local extract_output
-	extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
+	# Use a temporary file to capture errors while showing progress
+	local error_log
+	error_log=$(mktemp)
+	timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>"${error_log}"
 	local extract_status=$?
 	
 	# Check if extraction was successful
@@ -518,18 +523,24 @@ function extract_with_erofs() {
 		# Verify that files were actually extracted
 		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
 			log_debug "Successfully extracted with fsck.erofs"
+			rm -f "${error_log}"
 			return 0
 		else
 			log_warn "fsck.erofs completed but no files extracted"
+			rm -f "${error_log}"
 			return 1
 		fi
 	elif [[ ${extract_status} -eq 124 ]]; then
 		log_warn "fsck.erofs extraction timed out after 5 minutes"
+		rm -f "${error_log}"
 		return 1
 	else
 		log_debug "fsck.erofs extraction failed with status ${extract_status}"
 		# Show relevant error messages only
-		echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
+		if [[ -s "${error_log}" ]]; then
+			grep -i "error\|fail\|invalid" "${error_log}" | head -5
+		fi
+		rm -f "${error_log}"
 		return 1
 	fi
 }
@@ -551,9 +562,14 @@ function extract_with_f2fs() {
 	# Create output directory
 	mkdir -p "${output_dir}" 2>/dev/null
 	
+	# Inform user that extraction is in progress (may take a while)
+	log_info "Extracting F2FS partition (this may take several minutes)..."
+	
 	# Try extraction with timeout to prevent hanging (10 minutes)
-	local extract_output
-	extract_output=$(timeout 600 "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" 2>&1)
+	# Use a temporary file to capture errors while showing progress
+	local error_log
+	error_log=$(mktemp)
+	timeout 600 "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" 2>"${error_log}"
 	local extract_status=$?
 	
 	# Check if extraction was successful
@@ -561,18 +577,24 @@ function extract_with_f2fs() {
 		# Verify that files were actually extracted
 		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
 			log_debug "Successfully extracted with extract.f2fs"
+			rm -f "${error_log}"
 			return 0
 		else
 			log_warn "extract.f2fs completed but no files extracted"
+			rm -f "${error_log}"
 			return 1
 		fi
 	elif [[ ${extract_status} -eq 124 ]]; then
 		log_warn "extract.f2fs extraction timed out (10 minutes)"
+		rm -f "${error_log}"
 		return 1
 	else
 		log_debug "extract.f2fs extraction failed with status ${extract_status}"
 		# Show relevant error messages only
-		echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
+		if [[ -s "${error_log}" ]]; then
+			grep -i "error\|fail\|invalid" "${error_log}" | head -5
+		fi
+		rm -f "${error_log}"
 		return 1
 	fi
 }
