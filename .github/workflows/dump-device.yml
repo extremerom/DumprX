@@ -118,9 +118,13 @@ jobs:
           ssh-keyscan "${GITLAB_INSTANCE}" >> ~/.ssh/known_hosts 2>/dev/null
           chmod 644 ~/.ssh/known_hosts
 
-          # Start ssh-agent in a controlled manner
-          # The SSH_AUTH_SOCK and SSH_AGENT_PID will be set in environment
+          # Start ssh-agent and export environment variables properly
+          # Parse ssh-agent output and export to GITHUB_ENV for persistence
           ssh-agent -s > /tmp/ssh-agent-env
+          grep -E '^(SSH_AUTH_SOCK|SSH_AGENT_PID)=' /tmp/ssh-agent-env | while read line; do
+            echo "$line" >> $GITHUB_ENV
+          done
+          # Source for current shell
           source /tmp/ssh-agent-env
           rm /tmp/ssh-agent-env
           ssh-add ~/.ssh/id_rsa
