@@ -2239,52 +2239,124 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 	find . \( -name "*sensetime*" -o -name "*.lic" \) | cut -d'/' -f'2-' >| .gitignore
 	[[ ! -s .gitignore ]] && rm .gitignore
 
-	# Create Subgroup
-	GRP_ID=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/groups/${GIT_ORG}" | jq -r '.id')
-	curl --request POST \
-	--header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-	--header "Content-Type: application/json" \
-	--data '{"name": "'"${brand}"'", "path": "'"$(echo ${brand} | tr [:upper:] [:lower:])"'", "visibility": "public", "parent_id": "'"${GRP_ID}"'"}' \
-	"${GITLAB_HOST}/api/v4/groups/"
-	echo ""
+	# Detect if GIT_ORG is a user or a group
+	# Try to get group info first
+	GRP_RESPONSE=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/groups/${GIT_ORG}")
+	GRP_ID=$(echo "${GRP_RESPONSE}" | jq -r '.id')
+	
+	# If group ID is null or empty, it's a user namespace
+	if [[ -z "${GRP_ID}" ]] || [[ "${GRP_ID}" == "null" ]]; then
+		log_info "Detected user namespace: ${GIT_ORG}"
+		IS_USER_NAMESPACE=true
+		
+		# Get user ID for user namespace
+		USER_RESPONSE=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/users?username=${GIT_ORG}")
+		USER_ID=$(echo "${USER_RESPONSE}" | jq -r '.[0].id')
+		
+		if [[ -z "${USER_ID}" ]] || [[ "${USER_ID}" == "null" ]]; then
+			log_error "Could not find user or group: ${GIT_ORG}"
+			exit 1
+		fi
+		
+		# For user namespaces, create project directly without subgroups
+		# Project name will be in format: brand_codename (e.g., xiaomi_miatoll)
+		PROJECT_NAME="${brand}_${codename}"
+		PROJECT_PATH=$(echo "${PROJECT_NAME}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
+		
+		log_info "Creating project ${PROJECT_PATH} in user namespace ${GIT_ORG}"
+		CREATE_RESPONSE=$(curl -s \
+			--header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+			-X POST \
+			"${GITLAB_HOST}/api/v4/projects?name=${PROJECT_NAME}&path=${PROJECT_PATH}&namespace_id=${USER_ID}&visibility=public")
+		
+		PROJECT_ID=$(echo "${CREATE_RESPONSE}" | jq -r '.id')
+		
+		# If project creation failed (might already exist), try to get existing project
+		if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
+			log_warn "Project creation failed, checking if project already exists..."
+			EXISTING_RESPONSE=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/projects/${GIT_ORG}%2F${PROJECT_PATH}")
+			PROJECT_ID=$(echo "${EXISTING_RESPONSE}" | jq -r '.id')
+			
+			if [[ -n "${PROJECT_ID}" ]] && [[ "${PROJECT_ID}" != "null" ]]; then
+				log_info "Using existing project with ID: ${PROJECT_ID}"
+			fi
+		fi
+		
+		# Update repo variable to match the created project path
+		repo="${PROJECT_PATH}"
+		
+	else
+		log_info "Detected group namespace: ${GIT_ORG}"
+		IS_USER_NAMESPACE=false
+		
+		# Create Subgroup for groups (existing logic)
+		curl --request POST \
+		--header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+		--header "Content-Type: application/json" \
+		--data '{"name": "'"${brand}"'", "path": "'"$(echo ${brand} | tr [:upper:] [:lower:])"'", "visibility": "public", "parent_id": "'"${GRP_ID}"'"}' \
+		"${GITLAB_HOST}/api/v4/groups/"
+		echo ""
 
-	# Subgroup ID
-	get_gitlab_subgrp_id(){
-		local SUBGRP=$(echo "$1" | tr '[:upper:]' '[:lower:]')
-		curl -s --request GET --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_HOST}/api/v4/groups/${GIT_ORG}/subgroups" | jq -r .[] | jq -r .path,.id > /tmp/subgrp.txt
-		local i
-		for i in $(seq "$(cat /tmp/subgrp.txt | wc -l)")
-		do
-			local TMP_I=$(cat /tmp/subgrp.txt | head -"$i" | tail -1)
-			[[ "$TMP_I" == "$SUBGRP" ]] && cat /tmp/subgrp.txt | head -$(("$i"+1)) | tail -1 > "$2"
-		done
-		}
+		# Subgroup ID
+		get_gitlab_subgrp_id(){
+			local SUBGRP=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+			curl -s --request GET --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_HOST}/api/v4/groups/${GIT_ORG}/subgroups" | jq -r .[] | jq -r .path,.id > /tmp/subgrp.txt
+			local i
+			for i in $(seq "$(cat /tmp/subgrp.txt | wc -l)")
+			do
+				local TMP_I=$(cat /tmp/subgrp.txt | head -"$i" | tail -1)
+				[[ "$TMP_I" == "$SUBGRP" ]] && cat /tmp/subgrp.txt | head -$(("$i"+1)) | tail -1 > "$2"
+			done
+			}
 
-	get_gitlab_subgrp_id ${brand} /tmp/subgrp_id.txt
-	SUBGRP_ID=$(< /tmp/subgrp_id.txt)
+		get_gitlab_subgrp_id ${brand} /tmp/subgrp_id.txt
+		SUBGRP_ID=$(< /tmp/subgrp_id.txt)
 
-	# Create Repository
-	curl -s \
-	--header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-	-X POST \
-	"${GITLAB_HOST}/api/v4/projects?name=${codename}&namespace_id=${SUBGRP_ID}&visibility=public"
+		# Create Repository
+		CREATE_RESPONSE=$(curl -s \
+		--header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+		-X POST \
+		"${GITLAB_HOST}/api/v4/projects?name=${codename}&namespace_id=${SUBGRP_ID}&visibility=public")
+		
+		# Check if creation was successful by getting project ID from response
+		CREATED_PROJECT_ID=$(echo "${CREATE_RESPONSE}" | jq -r '.id')
 
-	# Get Project/Repo ID
-	get_gitlab_project_id(){
-		local PROJ="$1"
-		curl -s --request GET --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_HOST}/api/v4/groups/$2/projects" | jq -r .[] | jq -r .path,.id > /tmp/proj.txt
-		local i
-		for i in $(seq "$(cat /tmp/proj.txt | wc -l)")
-		do
-			local TMP_I=$(cat /tmp/proj.txt | head -"$i" | tail -1)
-			[[ "$TMP_I" == "$PROJ" ]] && cat /tmp/proj.txt | head -$(("$i"+1)) | tail -1 > "$3"
-		done
-		}
-	get_gitlab_project_id ${codename} ${SUBGRP_ID} /tmp/proj_id.txt
-	PROJECT_ID=$(< /tmp/proj_id.txt)
+		# Get Project/Repo ID
+		get_gitlab_project_id(){
+			local PROJ="$1"
+			curl -s --request GET --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_HOST}/api/v4/groups/$2/projects" | jq -r .[] | jq -r .path,.id > /tmp/proj.txt
+			local i
+			for i in $(seq "$(cat /tmp/proj.txt | wc -l)")
+			do
+				local TMP_I=$(cat /tmp/proj.txt | head -"$i" | tail -1)
+				[[ "$TMP_I" == "$PROJ" ]] && cat /tmp/proj.txt | head -$(("$i"+1)) | tail -1 > "$3"
+			done
+			}
+		get_gitlab_project_id ${codename} ${SUBGRP_ID} /tmp/proj_id.txt
+		PROJECT_ID=$(< /tmp/proj_id.txt)
+		
+		# If we couldn't get PROJECT_ID from the search, use the one from creation
+		if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
+			if [[ -n "${CREATED_PROJECT_ID}" ]] && [[ "${CREATED_PROJECT_ID}" != "null" ]]; then
+				PROJECT_ID="${CREATED_PROJECT_ID}"
+				log_info "Using project ID from creation response: ${PROJECT_ID}"
+			fi
+		fi
+	fi
 
 	# Delete the Temporary Files
 	rm -rf /tmp/{subgrp,subgrp_id,proj,proj_id}.txt
+	
+	# Validate PROJECT_ID was successfully obtained
+	if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
+		log_error "Failed to create or retrieve GitLab project"
+		log_error "PROJECT_ID is empty or null"
+		log_error "Please check your GitLab token permissions and try again"
+		exit 1
+	fi
+	
+	log_success "GitLab project created/found with ID: ${PROJECT_ID}"
+	log_info "Project URL: ${GITLAB_HOST}/${GIT_ORG}/${repo}"
 
 	# Commit and Push
 	# Pushing via HTTPS doesn't work on GitLab for Large Repos (it's an issue with gitlab for large repos)
