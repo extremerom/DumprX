@@ -22,6 +22,7 @@ from typing import IO, List
 import requests
 
 from . import update_metadata_pb2
+from . import dumprx_logger as log
 
 
 class BadPayload(Exception):
@@ -101,7 +102,7 @@ def init_payload_info(reader: IO[bytes]) -> update_metadata_pb2.DeltaArchiveMani
     if hdr.magic != PAYLOAD_MAGIC:
         raise BadPayload("invalid magic")
     if hdr.version != 2:
-        print(f"Warning: payload version is {hdr.version} != 2 may be unsupported")
+        log.warn(f"Payload version is {hdr.version} != 2, may be unsupported")
     if hdr.manifest_len == 0:
         raise BadPayload("manifest length is zero")
     if hdr.manifest_sig_len == 0:
@@ -214,7 +215,7 @@ def _extract_partition_from_payload(
             future.result()
         futures.clear()
 
-        print(f"Extract partition: {partition.partition_name:<16} size: {total_size:<10} ... Done!")
+        log.success(f"Extracted partition: {partition.partition_name:<16} size: {total_size}")
 
 
 def extract_partitions_from_payload(
@@ -241,14 +242,12 @@ def extract_partitions_from_payload(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for p in all_parts:
             reader.seek(baseoff, SEEK_SET)
-            # print(f"Extracting output size: {data_size}")
 
             total_length = (
                 p.operations[-1].dst_extents[-1].start_block
                 + p.operations[-1].dst_extents[-1].num_blocks
             ) * block_size
-            # total_length = len(p.operations)
-            print(f"Extracting {p.partition_name} ...")
+            log.info(f"Extracting partition: {p.partition_name}")
             _extract_partition_from_payload(
                 reader,
                 block_size,
@@ -442,7 +441,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print("Extracting payload ...")
+    log.step("Extracting payload...")
     now = time.time()
 
     match args.type:
@@ -494,4 +493,9 @@ if __name__ == "__main__":
             raise Exception("type not support")
     tooks = time.time() - now
 
-    print("Done! tooks: %.2f" % tooks)
+    log.success(f"Payload extraction completed in {tooks:.2f} seconds")
+
+
+if __name__ == "__main__":
+    main()
+
