@@ -233,10 +233,12 @@ OFP_QC_DECRYPT="${UTILSDIR}"/oppo_decrypt/ofp_qc_decrypt.py
 OFP_MTK_DECRYPT="${UTILSDIR}"/oppo_decrypt/ofp_mtk_decrypt.py
 OPSDECRYPT="${UTILSDIR}"/oppo_decrypt/opscrypto.py
 LPUNPACK="${UTILSDIR}"/lpunpack
+LPUNPACK_PY="${UTILSDIR}"/lpunpack_tool.py
 SPLITUAPP="${UTILSDIR}"/splituapp.py
 PACEXTRACTOR="${UTILSDIR}"/pacextractor/python/pacExtractor.py
 NB0_EXTRACT="${UTILSDIR}"/nb0-extract
 KDZ_EXTRACT="${UTILSDIR}"/kdztools/unkdz.py
+KDZ_UNPACK_PY="${UTILSDIR}"/kdz_unpack.py
 DZ_EXTRACT="${UTILSDIR}"/kdztools/undz.py
 RUUDECRYPT="${UTILSDIR}"/RUU_Decrypt_Tool
 EXTRACT_IKCONFIG="${UTILSDIR}"/extract-ikconfig
@@ -247,6 +249,13 @@ RK_EXTRACT="${UTILSDIR}"/bin/rkImageMaker
 TRANSFER="${UTILSDIR}"/bin/transfer
 OMCDECODER="${UTILSDIR}"/omcdecoder.py
 OMCDECODER_BIN="${UTILSDIR}"/bin/omcdecoder
+OZIP_DECRYPT_PY="${UTILSDIR}"/ozip_decrypt.py
+EXT4_EXTRACT_PY="${UTILSDIR}"/ext4_extract.py
+PAYLOAD_EXTRACT_PY="${UTILSDIR}"/payload_extract_tool.py
+CPIO_TOOL_PY="${UTILSDIR}"/cpio_tool.py
+BROTLI="${UTILSDIR}"/bin/brotli
+EXTRACT_EROFS="${UTILSDIR}"/bin/extract.erofs
+MKFS_EROFS="${UTILSDIR}"/bin/mkfs.erofs
 
 if ! command -v 7zz > /dev/null 2>&1; then
 	BIN_7ZZ="${UTILSDIR}"/bin/7zz
@@ -395,23 +404,60 @@ cd "${PROJECT_DIR}/" || exit
 # Function for Extracting Super Images
 function superimage_extract() {
 	log_step "Extracting partitions from Super image"
-	if [ -f super.img ]; then
-		log_debug "Converting sparse super image to raw"
-		${SIMG2IMG} super.img super.img.raw 2>/dev/null
-	fi
-	if [[ ! -s super.img.raw ]] && [ -f super.img ]; then
-		mv super.img super.img.raw
-	fi
-	for partition in $PARTITIONS; do
-		($LPUNPACK --partition="$partition"_a super.img.raw || $LPUNPACK --partition="$partition" super.img.raw) 2>/dev/null
-		if [ -f "$partition"_a.img ]; then
-			mv "$partition"_a.img "$partition".img
+	
+	local super_img="super.img"
+	local super_raw="super.img.raw"
+	
+	# Convert sparse image to raw if needed
+	if [ -f "${super_img}" ]; then
+		log_debug "Checking if super image is sparse"
+		if file "${super_img}" | grep -q "Android sparse image"; then
+			log_info "Converting sparse super image to raw"
+			${SIMG2IMG} "${super_img}" "${super_raw}" 2>/dev/null
 		else
-			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" | rev | gawk '{ print $1 }' | rev | grep "$partition".img)
-			${BIN_7ZZ} e -y "${FILEPATH}" "$foundpartitions" dummypartition 2>/dev/null >> "$TMPDIR"/zip.log
+			log_debug "Super image is not sparse, using as-is"
+			cp "${super_img}" "${super_raw}" 2>/dev/null || mv "${super_img}" "${super_raw}"
+		fi
+	fi
+	
+	# Ensure we have the raw image
+	if [[ ! -f "${super_raw}" ]]; then
+		log_error "Super image not found or conversion failed"
+		return 1
+	fi
+	
+	# Try Python lpunpack tool first (preferred method - from MIO-KITCHEN)
+	if [[ -f "${LPUNPACK_PY}" ]] && command -v python3 &>/dev/null; then
+		log_info "Using Python lpunpack tool for extraction"
+		if python3 "${LPUNPACK_PY}" "${super_raw}" -o . 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "Python lpunpack extraction completed"
+			rm -rf "${super_raw}"
+			return 0
+		else
+			log_warn "Python lpunpack failed, falling back to binary lpunpack"
+		fi
+	fi
+	
+	# Fallback to binary lpunpack (original method)
+	log_info "Using binary lpunpack for extraction"
+	for partition in $PARTITIONS; do
+		log_debug "Extracting partition: ${partition}"
+		($LPUNPACK --partition="${partition}"_a "${super_raw}" || $LPUNPACK --partition="${partition}" "${super_raw}") 2>/dev/null
+		
+		# Handle _a suffix partitions
+		if [ -f "${partition}"_a.img ]; then
+			mv "${partition}"_a.img "${partition}".img
+		elif [ ! -f "${partition}".img ]; then
+			# Try to extract from original archive as fallback
+			log_debug "Partition ${partition} not found in super, trying original archive"
+			foundpartitions=$(${BIN_7ZZ} l -ba "${FILEPATH}" 2>/dev/null | rev | gawk '{ print $1 }' | rev | grep "${partition}".img)
+			if [[ -n "${foundpartitions}" ]]; then
+				${BIN_7ZZ} e -y "${FILEPATH}" "${foundpartitions}" 2>/dev/null >> "$TMPDIR"/zip.log
+			fi
 		fi
 	done
-	rm -rf super.img.raw
+	
+	rm -rf "${super_raw}"
 	log_success "Super image extraction completed"
 }
 
@@ -493,47 +539,61 @@ function extract_with_7z() {
 	fi
 }
 
-# Extract partition using fsck.erofs
+# Extract partition using fsck.erofs or extract.erofs
 function extract_with_erofs() {
 	local partition="$1"
 	local img_file="$2"
 	local output_dir="$3"
 	
-	log_debug "Attempting extraction with fsck.erofs..."
-	
-	# Check if fsck.erofs is available and functional
-	if ! command -v "${FSCK_EROFS}" >/dev/null 2>&1; then
-		log_debug "fsck.erofs not found"
-		return 1
-	fi
+	log_debug "Attempting extraction with erofs tools..."
 	
 	# Create output directory
 	mkdir -p "${output_dir}" 2>/dev/null
 	
-	# Try extraction with timeout to prevent hanging
-	local extract_output
-	extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
-	local extract_status=$?
+	# Try extract.erofs first (from MIO-KITCHEN, newer tool)
+	if [[ -x "${EXTRACT_EROFS}" ]]; then
+		log_debug "Using extract.erofs for EROFS extraction"
+		local extract_output
+		extract_output=$(timeout 300 "${EXTRACT_EROFS}" -x -o "${output_dir}" "${img_file}" 2>&1)
+		local extract_status=$?
+		
+		if [[ ${extract_status} -eq 0 ]]; then
+			if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+				log_debug "Successfully extracted with extract.erofs"
+				return 0
+			fi
+		elif [[ ${extract_status} -eq 124 ]]; then
+			log_warn "extract.erofs timed out after 5 minutes"
+		fi
+	fi
 	
-	# Check if extraction was successful
-	if [[ ${extract_status} -eq 0 ]]; then
-		# Verify that files were actually extracted
-		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
-			log_debug "Successfully extracted with fsck.erofs"
-			return 0
+	# Fallback to fsck.erofs (original method)
+	if command -v "${FSCK_EROFS}" >/dev/null 2>&1; then
+		log_debug "Using fsck.erofs for EROFS extraction"
+		local extract_output
+		extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
+		local extract_status=$?
+		
+		if [[ ${extract_status} -eq 0 ]]; then
+			if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+				log_debug "Successfully extracted with fsck.erofs"
+				return 0
+			else
+				log_warn "fsck.erofs completed but no files extracted"
+				return 1
+			fi
+		elif [[ ${extract_status} -eq 124 ]]; then
+			log_warn "fsck.erofs extraction timed out after 5 minutes"
+			return 1
 		else
-			log_warn "fsck.erofs completed but no files extracted"
+			log_debug "fsck.erofs extraction failed with status ${extract_status}"
+			echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
 			return 1
 		fi
-	elif [[ ${extract_status} -eq 124 ]]; then
-		log_warn "fsck.erofs extraction timed out after 5 minutes"
-		return 1
-	else
-		log_debug "fsck.erofs extraction failed with status ${extract_status}"
-		# Show relevant error messages only
-		echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
-		return 1
 	fi
+	
+	log_debug "No EROFS extraction tool available"
+	return 1
 }
 
 # Extract partition using mount loop
