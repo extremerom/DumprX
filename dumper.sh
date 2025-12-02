@@ -514,7 +514,7 @@ function extract_with_erofs() {
 	# Try extraction with timeout to prevent hanging
 	# Use a temporary file to capture errors while showing progress
 	local error_log
-	error_log=$(mktemp)
+	error_log=$(mktemp -t dumper_erofs_XXXXXX)
 	timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>"${error_log}"
 	local extract_status=$?
 	
@@ -568,7 +568,7 @@ function extract_with_f2fs() {
 	# Try extraction with timeout to prevent hanging (10 minutes)
 	# Use a temporary file to capture errors while showing progress
 	local error_log
-	error_log=$(mktemp)
+	error_log=$(mktemp -t dumper_f2fs_XXXXXX)
 	timeout 600 "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" 2>"${error_log}"
 	local extract_status=$?
 	
