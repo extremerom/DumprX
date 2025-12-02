@@ -225,6 +225,8 @@ SIMG2IMG="${UTILSDIR}"/bin/simg2img
 PACKSPARSEIMG="${UTILSDIR}"/bin/packsparseimg
 UNSIN="${UTILSDIR}"/unsin
 PAYLOAD_EXTRACTOR="${UTILSDIR}"/bin/payload-dumper-go
+# Alternative Python-based payload extractor from MIO-KITCHEN
+PAYLOAD_DUMPER_PY="${UTILSDIR}"/payload_dumper.py
 DTC="${UTILSDIR}"/dtc
 VMLINUX2ELF="${UTILSDIR}"/vmlinux-to-elf/vmlinux-to-elf
 KALLSYMS_FINDER="${UTILSDIR}"/vmlinux-to-elf/kallsyms-finder
@@ -232,9 +234,11 @@ OZIPDECRYPT="${UTILSDIR}"/oppo_ozip_decrypt/ozipdecrypt.py
 OFP_QC_DECRYPT="${UTILSDIR}"/oppo_decrypt/ofp_qc_decrypt.py
 OFP_MTK_DECRYPT="${UTILSDIR}"/oppo_decrypt/ofp_mtk_decrypt.py
 OPSDECRYPT="${UTILSDIR}"/oppo_decrypt/opscrypto.py
-LPUNPACK="${UTILSDIR}"/lpunpack
+LPUNPACK="${UTILSDIR}"/lpunpack.py
 SPLITUAPP="${UTILSDIR}"/splituapp.py
 PACEXTRACTOR="${UTILSDIR}"/pacextractor/python/pacExtractor.py
+# Alternative SPRD PAC extractor from MIO-KITCHEN
+UNPAC="${UTILSDIR}"/unpac.py
 NB0_EXTRACT="${UTILSDIR}"/nb0-extract
 KDZ_EXTRACT="${UTILSDIR}"/kdztools/unkdz.py
 DZ_EXTRACT="${UTILSDIR}"/kdztools/undz.py
@@ -262,8 +266,20 @@ fi
 MEGAMEDIADRIVE_DL="${UTILSDIR}"/downloaders/mega-media-drive_dl.sh
 AFHDL="${UTILSDIR}"/downloaders/afh_dl.py
 
-# EROFS
+# EROFS - Use extract.erofs from MIO-KITCHEN (replaces fsck.erofs)
+EXTRACT_EROFS=${UTILSDIR}/bin/extract.erofs
+# Keep fsck.erofs for backward compatibility checks
 FSCK_EROFS=${UTILSDIR}/bin/fsck.erofs
+# Also define MKFS_EROFS for potential repacking
+MKFS_EROFS=${UTILSDIR}/bin/mkfs.erofs
+
+# Additional MIO-KITCHEN binaries for image manipulation
+BROTLI=${UTILSDIR}/bin/brotli
+LPMAKE=${UTILSDIR}/bin/lpmake
+MAKE_EXT4FS=${UTILSDIR}/bin/make_ext4fs
+E2FSDROID=${UTILSDIR}/bin/e2fsdroid
+MKE2FS=${UTILSDIR}/bin/mke2fs
+IMG2SIMG=${UTILSDIR}/bin/img2simg
 
 # Partition List That Are Currently Supported
 PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory product xrom modem dtbo dtb boot vendor_boot recovery tz oppo_product preload_common opproduct reserve india my_preload my_odm my_stock my_operator my_country my_product my_company my_engineering my_heytap my_custom my_manifest my_carrier my_region my_bigball my_version special_preload system_dlkm vendor_dlkm odm_dlkm init_boot vendor_kernel_boot odmko socko nt_log mi_ext hw_product product_h preas preavs optics omr prism persist"
@@ -493,18 +509,27 @@ function extract_with_7z() {
 	fi
 }
 
-# Extract partition using fsck.erofs
+# Extract partition using extract.erofs (MIO-KITCHEN version)
 function extract_with_erofs() {
 	local partition="$1"
 	local img_file="$2"
 	local output_dir="$3"
 	
-	log_debug "Attempting extraction with fsck.erofs..."
+	log_debug "Attempting extraction with extract.erofs..."
 	
-	# Check if fsck.erofs is available and functional
-	if ! command -v "${FSCK_EROFS}" >/dev/null 2>&1; then
-		log_debug "fsck.erofs not found"
-		return 1
+	# Check if extract.erofs is available and functional
+	if [[ ! -x "${EXTRACT_EROFS}" ]]; then
+		# Fallback to fsck.erofs if available
+		if [[ -x "${FSCK_EROFS}" ]]; then
+			log_debug "extract.erofs not found, trying fsck.erofs..."
+			if ! command -v "${FSCK_EROFS}" >/dev/null 2>&1; then
+				log_debug "fsck.erofs not found"
+				return 1
+			fi
+		else
+			log_debug "No EROFS extraction tool found"
+			return 1
+		fi
 	fi
 	
 	# Create output directory
@@ -512,24 +537,33 @@ function extract_with_erofs() {
 	
 	# Try extraction with timeout to prevent hanging
 	local extract_output
-	extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
-	local extract_status=$?
+	local extract_status
+	
+	# Try extract.erofs first (newer MIO-KITCHEN tool)
+	if [[ -x "${EXTRACT_EROFS}" ]]; then
+		extract_output=$(timeout 300 "${EXTRACT_EROFS}" -x -i "${img_file}" -o "${output_dir}" 2>&1)
+		extract_status=$?
+	else
+		# Fallback to fsck.erofs
+		extract_output=$(timeout 300 "${FSCK_EROFS}" --extract="${output_dir}" "${img_file}" 2>&1)
+		extract_status=$?
+	fi
 	
 	# Check if extraction was successful
 	if [[ ${extract_status} -eq 0 ]]; then
 		# Verify that files were actually extracted
 		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
-			log_debug "Successfully extracted with fsck.erofs"
+			log_debug "Successfully extracted with EROFS tool"
 			return 0
 		else
-			log_warn "fsck.erofs completed but no files extracted"
+			log_warn "EROFS tool completed but no files extracted"
 			return 1
 		fi
 	elif [[ ${extract_status} -eq 124 ]]; then
-		log_warn "fsck.erofs extraction timed out after 5 minutes"
+		log_warn "EROFS extraction timed out after 5 minutes"
 		return 1
 	else
-		log_debug "fsck.erofs extraction failed with status ${extract_status}"
+		log_debug "EROFS extraction failed with status ${extract_status}"
 		# Show relevant error messages only
 		echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
 		return 1
@@ -648,16 +682,16 @@ function extract_partition_image() {
 	# Try extraction methods in order based on filesystem type
 	local extraction_success=false
 	
-	# For EROFS: Use fsck.erofs for extraction (native tool, most efficient)
+	# For EROFS: Use extract.erofs/fsck.erofs for extraction (native tool, most efficient)
 	if [[ "${fs_type}" == "erofs" ]]; then
-		log_info "Trying fsck.erofs extraction for EROFS..."
+		log_info "Trying EROFS extraction..."
 		if extract_with_erofs "${partition}" "${img_file}" "${output_dir}"; then
-			log_success "Extracted ${partition} with fsck.erofs"
+			log_success "Extracted ${partition} with EROFS tool"
 			rm -f "${img_file}" 2>/dev/null
 			extraction_success=true
 			return 0
 		else
-			log_warn "fsck.erofs extraction failed for ${partition}"
+			log_warn "EROFS extraction failed for ${partition}"
 		fi
 	fi
 	
@@ -707,8 +741,8 @@ function extract_partition_image() {
 		# Provide helpful error messages based on filesystem
 		case "${fs_type}" in
 			"erofs")
-				log_error "Methods tried: fsck.erofs"
-				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
+				log_error "Methods tried: extract.erofs/fsck.erofs"
+				log_error "EROFS requires extract.erofs tool or Linux kernel 5.4+ with fsck.erofs"
 				;;
 			"f2fs")
 				log_error "Methods tried: mount loop"
