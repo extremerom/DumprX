@@ -70,6 +70,7 @@ function _usage() {
 	echo "    system.new.img | system.img | system-sign.img | UPDATE.APP"
 	echo "    *.emmc.img | *.img.ext4 | system.bin | system-p | payload.bin"
 	echo "    *.nb0 | .*chunk* | *.pac | *super*.img | *system*.sin"
+	echo "    *romfs* | *logo*.img | resource.img (Rockchip) | *.cpio"
 	echo ""
 	echo "  Options:"
 	echo "    --verbose, -v     Enable verbose (debug) logging"
@@ -1369,9 +1370,26 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep tar.md5 | gawk '{print $NF}' | grep -
 	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q payload.bin 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "payload.bin" | wc -l) -ge 1 ]]; then
 	log_step "AB OTA payload.bin detected"
-	log_info "Extracting payload using $(nproc --all) CPU cores..."
-	${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" "${FILEPATH}" >/dev/null
-	log_success "Payload extraction completed"
+	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x "${FILEPATH}" payload.bin 2>/dev/null >> "${TMPDIR}"/zip.log
+	find "${TMPDIR}" -type f -name "payload.bin" -exec mv {} . \;
+	
+	# Try Python payload extractor first (from MIO-KITCHEN)
+	if [[ -f "${PAYLOAD_EXTRACT_PY}" ]] && command -v python3 &>/dev/null; then
+		log_info "Using Python payload extractor..."
+		if python3 "${PAYLOAD_EXTRACT_PY}" payload.bin -o . 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "Python payload extraction completed"
+		else
+			log_warn "Python payload extractor failed, falling back to payload-dumper-go"
+			log_info "Extracting payload using $(nproc --all) CPU cores..."
+			${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" payload.bin >/dev/null
+			log_success "Payload extraction completed"
+		fi
+	else
+		# Fallback to payload-dumper-go
+		log_info "Extracting payload using $(nproc --all) CPU cores..."
+		${PAYLOAD_EXTRACTOR} -c "$(nproc --all)" -o "${TMPDIR}" payload.bin >/dev/null
+		log_success "Payload extraction completed"
+	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".*.rar\|.*.zip\|.*.7z\|.*.tar$" 2>/dev/null || [[ $(find "${TMPDIR}" -type f \( -name "*.rar" -o -name "*.zip" -o -name "*.7z" -o -name "*.tar" \) | wc -l) -ge 1 ]]; then
 	log_step "Compressed archive firmware detected"
 	if [[ -f "${FILEPATH}" ]]; then
@@ -1409,11 +1427,82 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "UPDATE.APP" 2>/dev/null || [[ $(f
 	fi
 	superimage_extract || exit 1
 	log_success "UPDATE.APP extraction completed"
+elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "romfs\|ROMFS" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "*romfs*" -o -name "*ROMFS*" | wc -l) -ge 1 ]]; then
+	log_step "ROMFS filesystem detected"
+	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
+	
+	# Find ROMFS files
+	romfs_files=$(find "${TMPDIR}" -type f -name "*romfs*" -o -name "*ROMFS*")
+	
+	if [[ -n "${romfs_files}" ]]; then
+		log_info "Extracting ROMFS filesystem(s)..."
+		for romfs_file in ${romfs_files}; do
+			if [[ -f "${ROMFS_PARSE_PY}" ]] && command -v python3 &>/dev/null; then
+				output_dir=$(basename "${romfs_file}" | sed 's/\.[^.]*$//')
+				log_debug "Parsing ROMFS file: ${romfs_file}"
+				python3 -c "
+import sys
+sys.path.insert(0, '${UTILSDIR}')
+from core.romfs_parse import RomfsParse
+parser = RomfsParse('${romfs_file}')
+parser.parse()
+parser.extract('${output_dir}')
+print(f'ROMFS extracted to ${output_dir}')
+" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"
+			else
+				log_warn "ROMFS parser not available, skipping ${romfs_file}"
+			fi
+		done
+		log_success "ROMFS extraction completed"
+	else
+		log_warn "No ROMFS files found"
+	fi
+elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -qi "logo.img\|LOGO.IMG" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -iname "*logo*.img" | wc -l) -ge 1 ]]; then
+	log_step "Logo image detected"
+	[[ -f "${FILEPATH}" ]] && ${BIN_7ZZ} x "${FILEPATH}" 2>/dev/null >> "${TMPDIR}"/zip.log
+	
+	# Find logo image files
+	logo_files=$(find "${TMPDIR}" -type f -iname "*logo*.img")
+	
+	if [[ -n "${logo_files}" ]]; then
+		log_info "Found logo image file(s)"
+		for logo_file in ${logo_files}; do
+			log_debug "Logo image: ${logo_file}"
+			# Logo images are typically just image containers
+			# They can be extracted with 7z or specific tools
+			output_dir=$(basename "${logo_file}" | sed 's/\.[^.]*$//')_extracted
+			mkdir -p "${output_dir}"
+			
+			# Try to extract with 7z first
+			if ${BIN_7ZZ} x -y "${logo_file}" -o"${output_dir}/" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+				log_success "Logo image extracted to ${output_dir}"
+			else
+				log_warn "Could not extract ${logo_file} with 7z, copying as-is"
+				cp "${logo_file}" .
+			fi
+		done
+		log_success "Logo image processing completed"
+	else
+		log_warn "No logo image files found"
+	fi
 elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "rockchip" 2>/dev/null || [[ $(find "${TMPDIR}" -type f -name "rockchip") ]]; then
 	log_step "Rockchip firmware detected"
 	log_info "Extracting Rockchip firmware..."
 	${RK_EXTRACT} -unpack "${FILEPATH}" ${TMPDIR}
 	${AFPTOOL_EXTRACT} -unpack ${TMPDIR}/firmware.img ${TMPDIR}
+	
+	# Check for Rockchip resource images
+	if [[ -f "${TMPDIR}/resource.img" ]] && [[ -f "${RSCEUTIL_PY}" ]] && command -v python3 &>/dev/null; then
+		log_info "Extracting Rockchip resource image..."
+		python3 -c "
+import sys
+sys.path.insert(0, '${UTILSDIR}')
+from core.rsceutil import unpack
+unpack('${TMPDIR}/resource.img', '${TMPDIR}/resource_extracted', None)
+print('Rockchip resource image extracted')
+" 2>&1 | tee -a "${DUMPRX_LOG_FILE}" || log_debug "Resource extraction failed or not needed"
+	fi
+	
 	[ -f ${TMPDIR}/Image/super.img ] && {
 		mv ${TMPDIR}/Image/super.img ${TMPDIR}/super.img
 		cd ${TMPDIR}
@@ -1508,6 +1597,29 @@ extract_boot_image "vendor_boot"
 extract_boot_image "recovery"
 extract_boot_image "init_boot"
 extract_boot_image "vendor_kernel_boot"
+
+# Extract CPIO ramdisks if present
+log_step "Checking for CPIO ramdisks"
+ramdisk_files=$(find . -maxdepth 2 -type f -name "*ramdisk*" -o -name "*.cpio" 2>/dev/null)
+
+if [[ -n "${ramdisk_files}" ]] && [[ -f "${CPIO_TOOL_PY}" ]] && command -v python3 &>/dev/null; then
+	log_info "Found CPIO ramdisk file(s), extracting..."
+	for ramdisk in ${ramdisk_files}; do
+		# Skip if it's a directory
+		[[ -d "${ramdisk}" ]] && continue
+		
+		output_dir=$(dirname "${ramdisk}")/$(basename "${ramdisk}" | sed 's/\.[^.]*$//')_extracted
+		log_debug "Extracting ${ramdisk} to ${output_dir}"
+		
+		if python3 "${CPIO_TOOL_PY}" -x "${ramdisk}" -o "${output_dir}" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "CPIO ramdisk extracted: ${ramdisk}"
+		else
+			log_debug "Could not extract ${ramdisk} (may not be CPIO format)"
+		fi
+	done
+else
+	log_debug "No CPIO ramdisks found or CPIO tool not available"
+fi
 
 # Extract DTBO
 extract_dtbo_image
