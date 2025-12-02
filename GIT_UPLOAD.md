@@ -1,6 +1,6 @@
 # Git Upload System - Handling Large Firmware Dumps
 
-This document explains the improved git upload system for handling large firmware dumps and resolving HTTP 500 errors.
+This document explains the git upload system for handling large firmware dumps.
 
 ## Problem
 
@@ -14,9 +14,7 @@ fatal: the remote end hung up unexpectedly
 
 This happens because:
 1. **Large files** - Font files, binaries, APKs can be very large
-2. **Too many files in one commit** - Overwhelming the GitHub API
-3. **Network timeouts** - Long-running pushes timing out
-4. **GitHub limits** - 100MB file limit, 2GB repository limit (recommended)
+2. **GitHub limits** - 100MB file limit, 2GB repository limit (recommended)
 
 ## Solutions Implemented
 
@@ -25,27 +23,15 @@ This happens because:
 Automatically tracks large files:
 
 ```bash
-# Common large file patterns tracked:
-*.so, *.so.*     # Native libraries
-*.apk, *.jar     # Android packages
-*.ttf, *.otf     # Font files (like NotoSansMyanmar-Medium.otf)
-*.ttc            # Font collections
-*.png, *.spv     # Images and compiled shaders
-*.dat, *.bin     # Binary data files
+# Files larger than 100MB are automatically tracked with LFS
+find . -type f -not -path ".git/*" -size +100M -exec git lfs track {} \;
 ```
 
-Any file > 50MB is automatically tracked with LFS.
+**LFS Lock Verification:** The script automatically enables Git LFS lock verification for the remote repository, preventing concurrent modifications to large binary files.
 
-### 2. Improved Git Configuration
+### 2. File Splitting
 
-Optimizes git for large repositories:
-
-```bash
-# Buffer sizes (1GB for very large files)
-http.postBuffer = 1048576000
-http.maxRequestBuffer = 524288000
-
-# Timeouts (effectively unlimited)
+Files larger than 62MB are split into smaller parts:
 http.lowSpeedLimit = 0
 http.lowSpeedTime = 999999
 

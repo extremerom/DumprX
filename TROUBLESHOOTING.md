@@ -90,7 +90,16 @@ split -b 47M large_file.img large_file.img.
 find . -type f -size +50M -not -path "./.git/*" -exec git lfs track {} \;
 ```
 
-### 6. Check GitHub Status
+### 6. Git LFS Locking Warning
+If you see a warning about "Locking support detected on remote", this is normal and handled automatically:
+```
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.com/.../info/lfs.locksverify true
+```
+
+The script automatically enables LFS lock verification for all remote repositories (GitHub, GitLab, etc.). This prevents concurrent modifications to large binary files. No manual action is required.
+
+### 7. Check GitHub Status
 Visit https://www.githubstatus.com/ to check if GitHub is experiencing issues.
 
 ## Prevention Tips
