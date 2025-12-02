@@ -330,7 +330,7 @@ class UrlFileReader(IO[bytes]):
         if self.pos >= self.total:
             return b""
 
-        # 初始化或重新定位流
+        # Initialize or reposition stream
         if self.stream is None or self.stream_start + self.stream_pos != self.pos:
             if self.stream is not None:
                 self.stream.close()
@@ -338,7 +338,7 @@ class UrlFileReader(IO[bytes]):
             headers = {"User-Agent": self.UA, "Range": f"bytes={self.pos}-"}
             self.stream = requests.get(self.url, headers=headers, stream=True)
 
-            # 检查Range请求是否成功
+            # Check if Range request was successful
             if self.stream.status_code not in (200, 206):
                 self.stream.close()
                 raise Exception(
@@ -348,7 +348,7 @@ class UrlFileReader(IO[bytes]):
             self.stream_start = self.pos
             self.stream_pos = 0
 
-        # 确定要读取的大小
+        # Determine the size to read
         if size < 0:
             size = self.total - self.pos
         else:
