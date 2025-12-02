@@ -178,5 +178,6 @@ Credit for those tools goes to everyone whosoever worked hard to put all those p
     - payload_extract.py - OTA payload extractor
     - Enhanced EROFS tools (extract.erofs, mkfs.erofs)
     - Updated magiskboot, brotli, and sparse image tools
-  - See [UNPACK_INTEGRATION.md](UNPACK_INTEGRATION.md) for details
+  - See [UNPACK_INTEGRATION.md](UNPACK_INTEGRATION.md) for usage details
+  - See [INTEGRATION_SUMMARY.md](INTEGRATION_SUMMARY.md) for complete integration summary
 
