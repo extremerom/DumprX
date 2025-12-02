@@ -12,11 +12,6 @@ source "${PROJECT_DIR}/lib/utils.sh"
 source "${PROJECT_DIR}/lib/config.sh"
 source "${PROJECT_DIR}/lib/downloaders.sh"
 
-# Source git_upload library if available (for advanced git operations)
-if [[ -f "${PROJECT_DIR}/lib/git_upload.sh" ]]; then
-	source "${PROJECT_DIR}/lib/git_upload.sh"
-fi
-
 # Clear Screen
 tput reset 2>/dev/null || clear
 
@@ -1710,145 +1705,18 @@ rm -rf "${TMPDIR}" 2>/dev/null
 
 # Helper function to push with retry logic
 # Wrapper that provides a simple interface while calling the library function with proper parameters
-_git_push_wrapper() {
-	# This wrapper ensures the library's git_push_with_retry is called with correct parameters
-	# The library function signature is: git_push_with_retry <repo_dir> <remote> <branch> [max_retries]
-	
-	# Ensure branch variable is set
-	if [[ -z "$branch" ]]; then
-		log_error "Branch name is not set for git push"
-		return 1
-	fi
-	
-	# Check if there are any commits on the current branch
-	if ! git log -1 >/dev/null 2>&1; then
-		log_info "No commits found on branch ${branch}"
-		log_info "Creating initial commit if staging area has files..."
-		
-		# Check if there are staged changes
-		if ! git diff --cached --quiet 2>/dev/null; then
-			log_info "Staging area has files, committing them"
-			git commit -sm "Initial commit for ${description:-firmware dump}" || {
-				log_error "Failed to create initial commit"
-				return 1
-			}
-		else
-			log_info "No staged files to commit - push will be skipped"
-			return 0  # Return success as there's nothing to push
-		fi
-	fi
-	
-	# Call library function with proper parameters
-	# Parameters: <repo_dir> <remote> <branch> [max_retries]
-	git_push_with_retry "." "origin" "${branch}" 10
-}
-
-# Helper function to split a large directory into multiple parts
-split_and_push_directory() {
-	local dir_name="$1"
-	local dir_path="$2"
-	local exclude_pattern="$3"
-	local num_parts="${4:-3}"  # Default to 3 parts if not specified
-	
-	if [ ! -d "$dir_path" ]; then
-		return 0
-	fi
-	
-	# Get all subdirectories in the directory
-	local SUBDIRS=()
-	while IFS= read -r -d '' subdir; do
-		local dirname=$(basename "$subdir")
-		# Skip excluded patterns if provided
-		if [ -n "$exclude_pattern" ] && [[ "$dirname" =~ $exclude_pattern ]]; then
-			continue
-		fi
-		SUBDIRS+=("$dirname")
-	done < <(find "$dir_path" -maxdepth 1 -type d -not -path "$dir_path" -print0 2>/dev/null | sort -z)
-	
-	# Calculate how many subdirs per part (ceiling division)
-	local total=${#SUBDIRS[@]}
-	local part_size=$(( (total + num_parts - 1) / num_parts ))  # Ceiling division
-	
-	# Push subdirectories in multiple parts
-	for (( part=1; part<=num_parts; part++ )); do
-		local start_idx=$(( (part - 1) * part_size ))
-		local end_idx=$(( part * part_size ))
-		
-		# Add subdirectories for this part
-		local has_content=false
-		for (( idx=$start_idx; idx<$end_idx && idx<$total; idx++ )); do
-			local subdir="${SUBDIRS[$idx]}"
-			if [ -d "$dir_path/$subdir" ]; then
-				git add "$dir_path/$subdir"
-				has_content=true
-			fi
-		done
-		
-		# Also handle root-level files for the first part (excluding .spv and .png files)
-		if [ $part -eq 1 ]; then
-			# Check if there are any root-level files (excluding .spv and .png files)
-			if [ -n "$(find "$dir_path" -maxdepth 1 -type f ! -name '*.spv' ! -name '*.png' 2>/dev/null)" ]; then
-				find "$dir_path" -maxdepth 1 -type f ! -name '*.spv' ! -name '*.png' -exec git add {} \; 2>/dev/null
-				has_content=true
-			fi
-		fi
-		
-		# Commit and push this part if there's content
-		if [ "$has_content" = true ]; then
-			# Only commit if there are staged changes (git diff returns non-zero when changes exist)
-			if ! git diff --cached --quiet; then
-				git commit -sm "Add ${dir_name} part ${part}/${num_parts} for ${description}"
-				_git_push_wrapper || return 1
-			fi
-		fi
-	done
-}
-
-# Helper function to commit .spv and .png files separately
-commit_binary_files_separately() {
-	local dir_path="$1"
-	local dir_name="$2"
-	
-	if [ ! -d "$dir_path" ]; then
-		return 0
-	fi
-	
-	# Commit .spv files separately
-	if [ -n "$(find "$dir_path" -type f -name '*.spv' 2>/dev/null)" ]; then
-		echo "Committing .spv files from ${dir_name} separately..."
-		find "$dir_path" -type f -name '*.spv' -exec git add {} \; 2>/dev/null
-		if ! git diff --cached --quiet; then
-			git commit -sm "Add .spv files for ${description}"
-			_git_push_wrapper || return 1
-		fi
-	fi
-	
-	# Commit .png files separately
-	if [ -n "$(find "$dir_path" -type f -name '*.png' 2>/dev/null)" ]; then
-		echo "Committing .png files from ${dir_name} separately..."
-		find "$dir_path" -type f -name '*.png' -exec git add {} \; 2>/dev/null
-		if ! git diff --cached --quiet; then
-			git commit -sm "Add .png files for ${description}"
-			_git_push_wrapper || return 1
-		fi
-	fi
-}
-
 commit_and_push(){
 	local DIRS=(
+		"system_ext"
 		"product"
 		"system_dlkm"
 		"odm"
 		"odm_dlkm"
 		"vendor_dlkm"
-		"optics"
-		"omr"
-		"prism"
-		"persist"
+		"vendor"
+		"system"
 	)
 
-	# Initialize Git LFS with better tracking patterns
-	log_step "Setting up Git LFS for large files"
 	git lfs install 2>/dev/null
 	
 	# Enable LFS lock verification if remote origin exists
@@ -1859,183 +1727,30 @@ commit_and_push(){
 		git config "lfs.${remote_url}/info/lfs.locksverify" true 2>/dev/null || true
 	fi
 	
-	# Track common large file types
-	local lfs_patterns=(
-		"*.so"
-		"*.so.*"
-		"*.apk"
-		"*.jar"
-		"*.ttf"
-		"*.otf"
-		"*.ttc"
-		"*.png"
-		"*.spv"
-		"*.dat"
-		"*.bin"
-	)
-	
-	for pattern in "${lfs_patterns[@]}"; do
-		git lfs track "$pattern" 2>/dev/null
-	done
-	
-	# Track any remaining files > 50MB
-	find . -type f -not -path ".git/*" -size +50M | while read -r largefile; do
-		git lfs track "$largefile" 2>/dev/null
-	done
-	
+	[ -e ".gitattributes" ] || find . -type f -not -path ".git/*" -size +100M -exec git lfs track {} \;
 	[ -e ".gitattributes" ] && {
 		git add ".gitattributes"
-		git commit -sm "Setup Git LFS for large files"
-		_git_push_wrapper || return 1
+		git commit -sm "Setup Git LFS"
+		git push -u origin "${branch}"
 	}
 
-	# Split APK files into smaller batches to avoid large commits
-	local apk_files=()
-	while IFS= read -r -d '' file; do
-		apk_files+=("$file")
-	done < <(find . -type f -name '*.apk' -print0 2>/dev/null)
-	
-	local apk_count=${#apk_files[@]}
-	if [ $apk_count -gt 0 ]; then
-		log_info "Found $apk_count APK files, splitting into batches..."
-		local batch_size=30  # Reduced from 50 for safer pushes
-		local batch_num=1
-		local total_batches=$(( (apk_count + batch_size - 1) / batch_size ))
-		
-		for ((i=0; i<$apk_count; i+=batch_size)); do
-			local batch=("${apk_files[@]:i:batch_size}")
-			if [ ${#batch[@]} -gt 0 ]; then
-				log_info "Adding APK batch $batch_num/$total_batches (${#batch[@]} files)..."
-				git add "${batch[@]}"
-				if ! git diff --cached --quiet; then
-					git commit -sm "Add apps batch $batch_num/$total_batches for ${description}"
-					_git_push_wrapper || return 1
-				fi
-				batch_num=$((batch_num + 1))
-			fi
-		done
-	fi
+	git add $(find -type f -name '*.apk')
+	git commit -sm "Add apps for ${description}"
+	git push -u origin "${branch}"
 
 	for i in "${DIRS[@]}"; do
-		local dir_added=false
-		[ -d "${i}" ] && { git add "${i}"; dir_added=true; }
-		[ -d system/"${i}" ] && { git add system/"${i}"; dir_added=true; }
-		[ -d system/system/"${i}" ] && { git add system/system/"${i}"; dir_added=true; }
-		[ -d vendor/"${i}" ] && { git add vendor/"${i}"; dir_added=true; }
+		[ -d "${i}" ] && git add "${i}"
+		[ -d system/"${i}" ] && git add system/"${i}"
+		[ -d system/system/"${i}" ] && git add system/system/"${i}"
+		[ -d vendor/"${i}" ] && git add vendor/"${i}"
 
-		if [ "$dir_added" = true ] && ! git diff --cached --quiet; then
-			git commit -sm "Add ${i} for ${description}"
-			_git_push_wrapper || return 1
-		fi
+		git commit -sm "Add ${i} for ${description}"
+		git push -u origin "${branch}"
 	done
 
-	# Split large directories into multiple parts to avoid HTTP 500 errors with large files
-	
-	# Commit .spv and .png files separately before splitting system directories
-	commit_binary_files_separately "system" "system"
-	commit_binary_files_separately "system/system" "system/system"
-	
-	# system_ext directory (no need to exclude system_* subdirs as they shouldn't exist here)
-	split_and_push_directory "system_ext" "system_ext" '' 3
-	[ -d system/system_ext ] && split_and_push_directory "system/system_ext" "system/system_ext" '' 3
-	
-	# vendor directory - increase splits to avoid large commits
-	split_and_push_directory "vendor" "vendor" '' 5
-	
-	# system directory (excluding nested system_ext and system_dlkm already handled above)
-	# Split into 8 parts to handle large number of files
-	split_and_push_directory "system" "system" '^system_(ext|dlkm)$' 8
-
-	# Commit individual firmware partitions separately
-	local FIRMWARE_PARTITIONS=(
-		"boot"
-		"recovery" 
-		"modem"
-		"dtbo"
-		"dtb"
-		"vendor_boot"
-		"init_boot"
-		"vendor_kernel_boot"
-		"tz"
-	)
-	
-	for partition in "${FIRMWARE_PARTITIONS[@]}"; do
-		local has_partition=false
-		# Check for partition as directory
-		if [ -d "${partition}" ]; then
-			git add "${partition}"
-			has_partition=true
-		fi
-		# Check for partition as file with common extensions
-		for ext in img bin mbn; do
-			if [ -f "${partition}.${ext}" ]; then
-				git add "${partition}.${ext}"
-				has_partition=true
-			fi
-		done
-		# Only commit if we actually added something
-		if [ "$has_partition" = true ]; then
-			if ! git diff --cached --quiet; then
-				git commit -sm "Add ${partition} for ${description}"
-				_git_push_wrapper || return 1
-			fi
-		fi
-	done
-
-	# Split remaining files into smaller chunks instead of one large commit
-	echo "Adding remaining files in smaller batches..."
-	local remaining_files=()
-	while IFS= read -r -d '' file; do
-		remaining_files+=("$file")
-	done < <(git ls-files --others --exclude-standard -z 2>/dev/null)
-	
-	local remaining_count=${#remaining_files[@]}
-	
-	if [ $remaining_count -gt 0 ]; then
-		echo "Found $remaining_count remaining files, splitting into batches..."
-		local file_batch_size=100
-		local file_batch_num=1
-		local total_file_batches=$(( (remaining_count + file_batch_size - 1) / file_batch_size ))
-		
-		for ((i=0; i<$remaining_count; i+=file_batch_size)); do
-			local file_batch=("${remaining_files[@]:i:file_batch_size}")
-			if [ ${#file_batch[@]} -gt 0 ]; then
-				echo "Adding extras batch $file_batch_num/$total_file_batches (${#file_batch[@]} files)..."
-				git add "${file_batch[@]}" 2>/dev/null
-				if ! git diff --cached --quiet; then
-					git commit -sm "Add extras batch $file_batch_num/$total_file_batches for ${description}"
-					_git_push_wrapper || return 1
-				fi
-				file_batch_num=$((file_batch_num + 1))
-			fi
-		done
-	fi
-	
-	# Final check for any remaining unstaged files - use batching to avoid large commits
-	local final_files=()
-	while IFS= read -r -d '' file; do
-		final_files+=("$file")
-	done < <(git ls-files --others --exclude-standard -z 2>/dev/null)
-	
-	if [ ${#final_files[@]} -gt 0 ]; then
-		echo "Found ${#final_files[@]} final unstaged files, adding in batches..."
-		local final_batch_size=50
-		local final_batch_num=1
-		local total_final_batches=$(( (${#final_files[@]} + final_batch_size - 1) / final_batch_size ))
-		
-		for ((i=0; i<${#final_files[@]}; i+=final_batch_size)); do
-			local final_batch=("${final_files[@]:i:final_batch_size}")
-			if [ ${#final_batch[@]} -gt 0 ]; then
-				echo "Adding final batch $final_batch_num/$total_final_batches (${#final_batch[@]} files)..."
-				git add "${final_batch[@]}" 2>/dev/null
-				if ! git diff --cached --quiet; then
-					git commit -sm "Add final extras batch $final_batch_num/$total_final_batches for ${description}"
-					_git_push_wrapper || return 1
-				fi
-				final_batch_num=$((final_batch_num + 1))
-			fi
-		done
-	fi
+	git add .
+	git commit -sm "Add extras for ${description}"
+	git push -u origin "${branch}"
 }
 
 split_files(){
@@ -2084,11 +1799,6 @@ if [[ -s "${PROJECT_DIR}"/.github_token ]]; then
 	
 	log_step "Initializing Git repository"
 	git init
-	
-	# Use improved git configuration from git_upload library
-	if declare -F git_configure_large_repo >/dev/null; then
-		git_configure_large_repo "." || log_warn "Could not configure git optimally"
-	fi
 	
 	# Validate branch name before checkout
 	if [[ -z "${branch}" ]]; then
