@@ -131,7 +131,7 @@ class Extractor:
             if entry_inode.is_symlink:
                 try:
                     link_target = entry_inode.open_read().read().decode("utf8")
-                except Exception and BaseException:
+                except (Exception, BaseException):
                     link_target_block = int.from_bytes(entry_inode.open_read().read(), "little")
                     link_target = root_inode.volume.read(link_target_block * root_inode.volume.block_size,
                                                          entry_inode.inode.i_size).decode("utf8")
@@ -163,7 +163,7 @@ class Extractor:
                 try:
                     with open(file_target, 'wb') as out:
                         out.write(entry_inode.open_read().read())
-                except Exception and BaseException as e:
+                except (Exception, BaseException) as e:
                     logging.exception('Ext4Extractor')
                     print(f'[E] Cannot Write to {file_target}, Reason: {e}')
                 if os.name == 'posix' and os.geteuid() == 0:
@@ -178,12 +178,9 @@ class Extractor:
                         finally:
                             ...
                     symlink(link_target, target)
-                except BaseException and Exception:
-                    try:
-                        if link_target and link_target.isprintable():
-                            symlink(link_target, target)
-                    finally:
-                        ...
+                except (BaseException, Exception):
+                    if link_target and link_target.isprintable():
+                        symlink(link_target, target)
 
     def __ext4extractor(self):
         if not os.path.isdir(self.CONFIG_DIR):

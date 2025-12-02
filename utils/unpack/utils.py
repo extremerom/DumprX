@@ -48,9 +48,10 @@ DataImage = blockimgdiff.DataImage
 # -----
 # ----VALUES
 
-# Prevent system errors
+# Prevent integer string conversion issues
+# Set a reasonable limit instead of unlimited (0) to prevent DoS attacks
 if hasattr(sys, 'set_int_max_str_digits'):
-    sys.set_int_max_str_digits(0)
+    sys.set_int_max_str_digits(10000)  # Allow large but bounded integers
 
 if os.name == 'nt':
     prog_path = getcwd()
@@ -190,18 +191,18 @@ class Unxz:
 
         try:
             self.do_unxz()
-        except:
+        except Exception:
             traceback.print_exc()
             try:
                 os.remove(self.out_file)
-            except:
-                ...
+            except OSError:
+                pass
         else:
             if self.remove_src:
                 try:
                     os.remove(self.file_path)
-                except:
-                    ...
+                except OSError:
+                    pass
 
     def do_unxz(self):
         dec = LZMADecompressor()

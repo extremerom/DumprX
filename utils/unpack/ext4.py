@@ -846,8 +846,8 @@ class Inode:
             try:
                 for xattr_name, xattr_value in self._parse_xattrs(inline_data[offset:], 0):
                     yield xattr_name, xattr_value
-            except BaseException and Exception:
-                ...
+            except (BaseException, Exception):
+                pass
         # xattr block(s)
         if check_block and self.inode.i_file_acl != 0:
             xattrs_block_start = self.inode.i_file_acl * self.volume.block_size

@@ -18,8 +18,8 @@ def extract(source, out_dir: str, flist: list):
 
     try:
         makedirs(out_dir, exist_ok=True)
-    finally:
-        ...
+    except OSError:
+        pass  # Directory already exists or cannot be created
     if not path.exists(source):
         print('The File Not Exist!')
         return 
