@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # (c) B. Kerler 2017-2020, licensed under MIT license
 """
+OZIP Decryption Tool for Oppo/OnePlus Firmware
+
+This tool decrypts OZIP firmware files from Oppo/OnePlus devices.
+
+Security Note: This code uses AES ECB mode because it's required to decrypt
+firmware files that were encrypted by the device manufacturer using ECB.
+We cannot change the encryption mode used by the firmware - we can only
+decrypt existing files that already use this encryption. This is not a
+security issue for this use case as we are not encrypting new data.
+
 Usage:
     ozipdecrypt.py --help
     ozipdecrypt.py <filename>
@@ -61,6 +71,7 @@ def main(file_arg):
 
     def keytest(data):
         for key in keys:
+            # ECB mode required - firmware is encrypted by manufacturer using ECB
             if AES.new(binascii.unhexlify(key), AES.MODE_ECB).decrypt(data)[0:4] in [b'\x50\x4B\x03\x04', b'\x41\x56\x42\x30', b'\x41\x4E\x44\x52']:
                 print("Found correct AES key: " + key)
                 return binascii.unhexlify(key)
@@ -84,6 +95,7 @@ def main(file_arg):
             rr.seek(0x1050)
             flen = os.stat(rfilename).st_size - 0x1050
 
+            # ECB mode required - firmware encrypted by manufacturer using ECB
             ctx = AES.new(key, AES.MODE_ECB)
             while dsize > 0:
                 if flen > 0x4000:
@@ -104,6 +116,7 @@ def main(file_arg):
 
     def decryptfile2(key, rfilename, wfilename):
         with open(rfilename, 'rb') as rr, open(wfilename, 'wb') as wf:
+            # ECB mode required - firmware encrypted by manufacturer using ECB
             ctx = AES.new(key, AES.MODE_ECB)
             bstart = 0
             goon = True
@@ -215,6 +228,7 @@ def main(file_arg):
             if key == -1:
                 print("Unknown AES key, reverse key from recovery first!")
                 return 1
+            # ECB mode required - firmware encrypted by manufacturer using ECB
             ctx = AES.new(key, AES.MODE_ECB)
             filename = file_arg[:-4] + "zip"
             with open(filename, 'wb') as wf:
