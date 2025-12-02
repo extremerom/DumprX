@@ -260,6 +260,9 @@ AFHDL="${UTILSDIR}"/downloaders/afh_dl.py
 # EROFS
 FSCK_EROFS=${UTILSDIR}/bin/fsck.erofs
 
+# F2FS
+EXTRACT_F2FS=${UTILSDIR}/bin/extract.f2fs
+
 # Partition List That Are Currently Supported
 PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory product xrom modem dtbo dtb boot vendor_boot recovery tz oppo_product preload_common opproduct reserve india my_preload my_odm my_stock my_operator my_country my_product my_company my_engineering my_heytap my_custom my_manifest my_carrier my_region my_bigball my_version special_preload system_dlkm vendor_dlkm odm_dlkm init_boot vendor_kernel_boot odmko socko nt_log mi_ext hw_product product_h preas preavs optics omr prism persist"
 EXT4PARTITIONS="system vendor cust odm oem factory product xrom systemex oppo_product preload_common hw_product product_h preas preavs optics omr prism persist"
@@ -531,6 +534,49 @@ function extract_with_erofs() {
 	fi
 }
 
+# Extract partition using extract.f2fs
+function extract_with_f2fs() {
+	local partition="$1"
+	local img_file="$2"
+	local output_dir="$3"
+	
+	log_debug "Attempting extraction with extract.f2fs..."
+	
+	# Check if extract.f2fs is available
+	if [[ ! -x "${EXTRACT_F2FS}" ]]; then
+		log_debug "extract.f2fs not found or not executable"
+		return 1
+	fi
+	
+	# Create output directory
+	mkdir -p "${output_dir}" 2>/dev/null
+	
+	# Try extraction with timeout to prevent hanging (10 minutes)
+	local extract_output
+	extract_output=$(timeout 600 "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" 2>&1)
+	local extract_status=$?
+	
+	# Check if extraction was successful
+	if [[ ${extract_status} -eq 0 ]]; then
+		# Verify that files were actually extracted
+		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+			log_debug "Successfully extracted with extract.f2fs"
+			return 0
+		else
+			log_warn "extract.f2fs completed but no files extracted"
+			return 1
+		fi
+	elif [[ ${extract_status} -eq 124 ]]; then
+		log_warn "extract.f2fs extraction timed out (10 minutes)"
+		return 1
+	else
+		log_debug "extract.f2fs extraction failed with status ${extract_status}"
+		# Show relevant error messages only
+		echo "${extract_output}" | grep -i "error\|fail\|invalid" | head -5
+		return 1
+	fi
+}
+
 # Extract partition using mount loop
 function extract_with_mount() {
 	local partition="$1"
@@ -668,8 +714,21 @@ function extract_partition_image() {
 		fi
 	fi
 	
-	# For F2FS and other filesystems: Try mount directly
-	if [[ "${fs_type}" == "f2fs" ]] || [[ "${fs_type}" == "squashfs" ]]; then
+	# For F2FS: Use extract.f2fs tool (no kernel module required)
+	if [[ "${fs_type}" == "f2fs" ]]; then
+		log_info "Trying extract.f2fs extraction for F2FS..."
+		if extract_with_f2fs "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with extract.f2fs"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "extract.f2fs extraction failed for ${partition}"
+		fi
+	fi
+	
+	# For squashfs and other filesystems: Try mount directly
+	if [[ "${fs_type}" == "squashfs" ]]; then
 		log_info "Trying mount loop extraction for ${fs_type}..."
 		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
 			log_success "Extracted ${partition} with mount loop"
@@ -706,8 +765,8 @@ function extract_partition_image() {
 				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
 				;;
 			"f2fs")
-				log_error "Methods tried: mount loop"
-				log_error "F2FS requires Linux kernel 5.15+ for proper support"
+				log_error "Methods tried: extract.f2fs"
+				log_error "F2FS extraction failed - image may be corrupted or encrypted"
 				;;
 			"ext4"|"unknown")
 				log_error "Methods tried: 7z, mount loop"
