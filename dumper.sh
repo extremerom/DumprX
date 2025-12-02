@@ -543,7 +543,7 @@ function extract_with_f2fs() {
 	log_debug "Attempting extraction with extract.f2fs..."
 	
 	# Check if extract.f2fs is available
-	if [[ ! -f "${EXTRACT_F2FS}" ]] || [[ ! -x "${EXTRACT_F2FS}" ]]; then
+	if [[ ! -x "${EXTRACT_F2FS}" ]]; then
 		log_debug "extract.f2fs not found or not executable"
 		return 1
 	fi
@@ -551,7 +551,7 @@ function extract_with_f2fs() {
 	# Create output directory
 	mkdir -p "${output_dir}" 2>/dev/null
 	
-	# Try extraction with timeout to prevent hanging
+	# Try extraction with timeout to prevent hanging (10 minutes)
 	local extract_output
 	extract_output=$(timeout 600 "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" 2>&1)
 	local extract_status=$?
@@ -567,7 +567,7 @@ function extract_with_f2fs() {
 			return 1
 		fi
 	elif [[ ${extract_status} -eq 124 ]]; then
-		log_warn "extract.f2fs extraction timed out after 10 minutes"
+		log_warn "extract.f2fs extraction timed out (10 minutes)"
 		return 1
 	else
 		log_debug "extract.f2fs extraction failed with status ${extract_status}"
