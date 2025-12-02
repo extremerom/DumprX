@@ -29,6 +29,7 @@ You might've used firmware extractor via dumpyara from https://github.com/Androi
 - [x] **NEW**: Modular library architecture for better code organization
 - [x] **NEW**: Enhanced error handling and retry logic
 - [x] **NEW**: Checksum verification for downloads
+- [x] **NEW**: Samsung OMC decoder for automatic decryption of optics partition XML files
 
 ## Recommendations before Playing with Firmware Dumper
 
@@ -166,3 +167,6 @@ Credit for those tools goes to everyone whosoever worked hard to put all those p
 - unpackboot.sh (bootimg and ramdisk extractor, modified shell script)
   - Originally by @xiaolu and @carlitros900, stripped to unpack functionallity, by me @rokibhasansagar
 - twrpdtgen by @SebaUbuntu
+- OMCDecoder (Samsung OMC/CSC XML decoder, C++ binary)
+  - by @soulr344, uses gzip-hpp by @mapbox
+
