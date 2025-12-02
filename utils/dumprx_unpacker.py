@@ -26,10 +26,21 @@ def main():
         print("  ofp_qc       - Decrypt OFP (Qualcomm) files")
         print("  ofp_mtk      - Decrypt OFP (MTK) files")
         print("  opscrypto    - Decrypt OPS files")
-        print("  unpac        - Unpack PAC files")
+        print("  unpac        - Unpack PAC files (SpreadTrum)")
         print("  nb0extract   - Extract NB0 files")
         print("  unkdz        - Unpack KDZ files")
         print("  undz         - Unpack DZ files")
+        print("  cpio         - Unpack/repack CPIO archives")
+        print("  fspatch      - Patch fs_config before unpacking")
+        print("  contextpatch - Patch file_contexts before repacking")
+        print("  romfs        - Unpack ROMFS files")
+        print("  aml          - Unpack Amlogic V2 images")
+        print("  allwinner    - Unpack Allwinner images")
+        print("  qsb          - Process QSB images")
+        print("  mkdtboimg    - Parse/Unpack/Repack DTBO images")
+        print("  rsceutil     - Unpack/repack Rockchip resource images")
+        print("  squashfs     - Handle SquashFS images")
+        print("  ntpi         - Unpack NTPI images")
         sys.exit(1)
     
     command = sys.argv[1]
@@ -73,6 +84,39 @@ def main():
         elif command == 'undz':
             from pylib import undz
             undz.main()
+        elif command == 'cpio':
+            from pylib import cpio
+            cpio.main()
+        elif command == 'fspatch':
+            from pylib import fspatch
+            fspatch.main()
+        elif command == 'contextpatch':
+            from pylib import contextpatch
+            contextpatch.main()
+        elif command == 'romfs':
+            from pylib import romfs_parse
+            romfs_parse.main()
+        elif command == 'aml':
+            from pylib import aml_image
+            aml_image.main()
+        elif command == 'allwinner':
+            from pylib import allwinnerimage
+            allwinnerimage.main()
+        elif command == 'qsb':
+            from pylib import qsb_imger
+            qsb_imger.main()
+        elif command == 'mkdtboimg':
+            from pylib import mkdtboimg
+            mkdtboimg.main()
+        elif command == 'rsceutil':
+            from pylib import rsceutil
+            rsceutil.main()
+        elif command == 'squashfs':
+            from pylib import squashfs
+            squashfs.main()
+        elif command == 'ntpi':
+            from pylib import ntpi_unpacker
+            ntpi_unpacker.main()
         else:
             print(f"Unknown command: {command}")
             sys.exit(1)
