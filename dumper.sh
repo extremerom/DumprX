@@ -1713,6 +1713,10 @@ commit_and_push(){
 		"odm"
 		"odm_dlkm"
 		"vendor_dlkm"
+		"optics"
+		"omr"
+		"prism"
+		"persist"
 		"vendor"
 		"system"
 	)
