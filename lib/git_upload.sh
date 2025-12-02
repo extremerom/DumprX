@@ -443,7 +443,7 @@ function git_upload_dump() {
 		return 1
 	fi
 	
-	log_header "Uploading Firmware Dump to GitHub"
+	log_header "Uploading Firmware Dump to Git Repository"
 	log_info "Target branch: ${branch}"
 	
 	cd "${repo_dir}" || {
@@ -472,7 +472,7 @@ function git_upload_dump() {
 	fi
 	
 	# Step 6: Try different push strategies
-	log_step "Attempting to push to GitHub"
+	log_step "Attempting to push to remote repository"
 	
 	# Strategy 1: Normal push with retry
 	if git_push_with_retry "${repo_dir}" "origin" "${branch}" 10; then
