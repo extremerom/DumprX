@@ -36,6 +36,8 @@ Automatically tracks large files:
 
 Any file > 50MB is automatically tracked with LFS.
 
+**LFS Lock Verification:** The script automatically enables Git LFS lock verification for the remote repository, preventing concurrent modifications to large binary files. This is configured automatically when the remote is set up.
+
 ### 2. Improved Git Configuration
 
 Optimizes git for large repositories:
