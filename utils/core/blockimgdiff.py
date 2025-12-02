@@ -14,7 +14,6 @@
 #
 # pylint: disable=line-too-long
 import hashlib
-import logging
 import os
 import subprocess
 import tempfile
@@ -26,12 +25,17 @@ from heapq import heappop, heappush, heapify
 from multiprocessing import cpu_count
 from re import sub
 
-from .rangelib import RangeSet  # Assuming rangelib is in the same package directory
+from utils.core.rangelib import RangeSet
+from utils.core.logging_helper import log_info, log_warning, log_error
 
 __all__ = ["EmptyImage", "DataImage", "BlockImageDiff"]
 
-# Default logger if none is provided by the application
-DEFAULT_LOGGER = logging.getLogger(__name__)
+# Placeholder for logger - using print functions instead
+class DefaultLogger:
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: None  # No-op for now
+
+DEFAULT_LOGGER = DefaultLogger()
 
 # Placeholder for the language object, expected to be provided by the application
 # It should have a get(key, default_text=None, **kwargs) method

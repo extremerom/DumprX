@@ -8,8 +8,8 @@ Adapted from MIO-KITCHEN-SOURCE
 from __future__ import absolute_import, print_function
 import os
 import sys
-from .lpunpack import SparseImage  # Use the SparseImage from lpunpack.py
-from .logging_helper import log_info, log_success, log_error, log_warning
+from utils.core.lpunpack import SparseImage  # Use the SparseImage from lpunpack.py
+from utils.core.logging_helper import log_info, log_success, log_error, log_warning
 
 def simg2img(path):
     """

@@ -21,7 +21,7 @@ from typing import IO, List
 
 import requests
 
-from . import update_metadata_pb2
+from utils.core import update_metadata_pb2
 
 
 class BadPayload(Exception):

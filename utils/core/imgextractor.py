@@ -12,14 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 import os
 import re
 import struct
-from .posix import symlink
+from utils.core.posix import symlink
 from timeit import default_timer as dti
-from . import ext4
-from .utils import simg2img
+from utils.core import ext4
+from utils.core.utils import simg2img
+from utils.core.logging_helper import log_error, log_warning
 
 
 class Extractor:
@@ -163,9 +163,8 @@ class Extractor:
                 try:
                     with open(file_target, 'wb') as out:
                         out.write(entry_inode.open_read().read())
-                except Exception and BaseException as e:
-                    logging.exception('Ext4Extractor')
-                    print(f'[E] Cannot Write to {file_target}, Reason: {e}')
+                except Exception as e:
+                    log_error(f'Ext4Extractor: Cannot Write to {file_target}, Reason: {e}')
                 if os.name == 'posix' and os.geteuid() == 0:
                     os.chmod(file_target, int(mode, 8))
                     os.chown(file_target, uid, gid)

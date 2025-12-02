@@ -18,7 +18,7 @@ from enum import Enum
 
 from _ctypes import addressof
 from toml import dump, load
-from .posix import symlink, readlink
+from utils.core.posix import symlink, readlink
 
 CPIO_TRAILER_NAME = "TRAILER!!!"
 CPIO_FULL_PERMISSION = 0o7777
