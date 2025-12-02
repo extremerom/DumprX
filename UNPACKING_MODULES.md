@@ -1,14 +1,14 @@
 # DumprX Unpacking Modules
 
-This document describes the unpacking modules imported from [MIO-KITCHEN-SOURCE](https://github.com/ColdWindScholar/MIO-KITCHEN-SOURCE) and integrated into DumprX.
+This document describes the unpacking modules integrated from [MIO-KITCHEN-SOURCE](https://github.com/ColdWindScholar/MIO-KITCHEN-SOURCE) into DumprX.
 
 ## Overview
 
-DumprX now includes a comprehensive set of Python-based unpacking tools located in `utils/pylib/`. These modules provide support for extracting and processing various Android firmware formats.
+DumprX includes comprehensive Python-based unpacking tools located in `utils/pylib/`. These modules are adapted to use the DumprX logging system and integrate directly with `dumper.sh`.
 
 ## Installation
 
-Before using the Python-based unpacking modules, install the required dependencies:
+Install the required Python dependencies:
 
 ```bash
 pip3 install -r utils/pylib/requirements.txt
@@ -19,92 +19,119 @@ Or install individually:
 pip3 install pycryptodome protobuf requests zstandard toml
 ```
 
-## Usage
+## Module Integration
 
-### Command-Line Interface
+All Python modules in `utils/pylib/` are integrated with the DumprX logging system via `dumprx_logger.py`, which provides:
+- Consistent log levels (DEBUG, INFO, SUCCESS, WARN, ERROR, FATAL)
+- Colored output matching shell script logging
+- Timestamp support
+- Quiet and verbose mode support
+- Environment variable configuration
 
-The unified wrapper script `dumprx_unpacker.py` provides access to all unpacking modules:
+### Direct Usage
+
+The modules can be used directly without wrappers:
 
 ```bash
-python3 utils/dumprx_unpacker.py <command> [args...]
+# Extract payload.bin
+python3 utils/pylib/payload_extract.py -t bin -i payload.bin -o output/
+
+# Unpack super.img
+python3 utils/pylib/lpunpack.py super.img output/
+
+# Decrypt OZIP
+python3 utils/pylib/ozipdecrypt.py firmware.ozip
+
+# Decrypt OFP (Qualcomm)
+python3 utils/pylib/ofp_qc_decrypt.py firmware.ofp output/
+
+# Decrypt OFP (MTK)
+python3 utils/pylib/ofp_mtk_decrypt.py firmware.ofp output/
+
+# Decrypt OPS
+python3 utils/pylib/opscrypto.py decrypt firmware.ops
 ```
 
-### Available Commands
+### Available Modules
 
 #### Core Unpacking Tools
 
-| Command | Description | Usage Example |
-|---------|-------------|---------------|
-| `payload` | Extract Android OTA payload.bin files | `python3 dumprx_unpacker.py payload -t bin -i payload.bin -o output/` |
-| `lpunpack` | Unpack Android super.img (dynamic partitions) | `python3 dumprx_unpacker.py lpunpack super.img output/` |
-| `imgextract` | Extract ext4 filesystem images | Library only (no CLI) |
+| Module | Description | Usage Example |
+|--------|-------------|---------------|
+| `payload_extract.py` | Extract Android OTA payload.bin files | `python3 pylib/payload_extract.py -t bin -i payload.bin -o output/` |
+| `lpunpack.py` | Unpack Android super.img (dynamic partitions) | `python3 pylib/lpunpack.py super.img output/` |
+| `imgextractor.py` | Extract ext4 filesystem images | Use as library in Python scripts |
 
 #### Firmware Decryption Tools
 
-| Command | Description | Usage Example |
-|---------|-------------|---------------|
-| `ozipdecrypt` | Decrypt Oppo/OnePlus OZIP files | `python3 dumprx_unpacker.py ozipdecrypt firmware.ozip` |
-| `ofp_qc` | Decrypt OFP files (Qualcomm) | `python3 dumprx_unpacker.py ofp_qc firmware.ofp` |
-| `ofp_mtk` | Decrypt OFP files (MediaTek) | `python3 dumprx_unpacker.py ofp_mtk firmware.ofp` |
-| `opscrypto` | Decrypt OPS files | `python3 dumprx_unpacker.py opscrypto firmware.ops` |
+| Module | Description | Usage Example |
+|--------|-------------|---------------|
+| `ozipdecrypt.py` | Decrypt Oppo/OnePlus OZIP files | `python3 pylib/ozipdecrypt.py firmware.ozip` |
+| `ofp_qc_decrypt.py` | Decrypt OFP files (Qualcomm) | `python3 pylib/ofp_qc_decrypt.py firmware.ofp output/` |
+| `ofp_mtk_decrypt.py` | Decrypt OFP files (MediaTek) | `python3 pylib/ofp_mtk_decrypt.py firmware.ofp output/` |
+| `opscrypto.py` | Decrypt OPS files | `python3 pylib/opscrypto.py decrypt firmware.ops` |
 
 #### Vendor-Specific Tools
 
-| Command | Description | Usage Example |
-|---------|-------------|---------------|
-| `unpac` | Unpack SpreadTrum PAC files | `python3 dumprx_unpacker.py unpac firmware.pac output/` |
-| `nb0extract` | Extract Nokia/Sharp/Infocus NB0 files | `python3 dumprx_unpacker.py nb0extract firmware.nb0` |
-| `unkdz` | Unpack LG KDZ files | `python3 dumprx_unpacker.py unkdz firmware.kdz` |
-| `undz` | Unpack LG DZ files | `python3 dumprx_unpacker.py undz firmware.dz` |
-| `aml` | Unpack Amlogic V2 images | `python3 dumprx_unpacker.py aml image.img` |
-| `allwinner` | Unpack Allwinner images | `python3 dumprx_unpacker.py allwinner image.img` |
-| `qsb` | Process QSB images | `python3 dumprx_unpacker.py qsb image.qsb` |
-| `ntpi` | Unpack NTPI images | `python3 dumprx_unpacker.py ntpi image.ntpi` |
+| Module | Description | Usage Example |
+|--------|-------------|---------------|
+| `unpac.py` | Unpack SpreadTrum PAC files | `python3 pylib/unpac.py firmware.pac output/` |
+| `nb0_extractor.py` | Extract Nokia/Sharp/Infocus NB0 files | `python3 pylib/nb0_extractor.py firmware.nb0` |
+| `unkdz.py` | Unpack LG KDZ files | `python3 pylib/unkdz.py firmware.kdz` |
+| `undz.py` | Unpack LG DZ files | `python3 pylib/undz.py firmware.dz` |
+| `aml_image.py` | Unpack Amlogic V2 images | Use as library |
+| `allwinnerimage.py` | Unpack Allwinner images | Use as library |
+| `qsb_imger.py` | Process QSB images | Use as library |
+| `ntpi_unpacker.py` | Unpack NTPI images | Use as library |
 
 #### Archive and Filesystem Tools
 
-| Command | Description | Usage Example |
-|---------|-------------|---------------|
-| `cpio` | Unpack/repack CPIO archives | `python3 dumprx_unpacker.py cpio archive.cpio` |
-| `romfs` | Unpack ROMFS filesystems | `python3 dumprx_unpacker.py romfs romfs.img` |
-| `squashfs` | Handle SquashFS images | `python3 dumprx_unpacker.py squashfs image.squashfs` |
+| Module | Description | Usage Example |
+|--------|-------------|---------------|
+| `cpio.py` | Unpack/repack CPIO archives | Use as library |
+| `romfs_parse.py` | Unpack ROMFS filesystems | Use as library |
+| `squashfs.py` | Handle SquashFS images | Use as library |
 
 #### Image Processing Tools
 
-| Command | Description | Usage Example |
-|---------|-------------|---------------|
-| `mkdtboimg` | Parse/Unpack/Repack DTBO images | `python3 dumprx_unpacker.py mkdtboimg dtbo.img` |
-| `rsceutil` | Unpack/repack Rockchip resource images | `python3 dumprx_unpacker.py rsceutil resource.img` |
+| Module | Description | Usage Example |
+|--------|-------------|---------------|
+| `mkdtboimg.py` | Parse/Unpack/Repack DTBO images | Use as library |
+| `rsceutil.py` | Unpack/repack Rockchip resource images | Use as library |
 
 #### Patching Tools
 
-| Command | Description | Usage Example |
-|---------|-------------|---------------|
-| `fspatch` | Patch fs_config before unpacking | `python3 dumprx_unpacker.py fspatch config/` |
-| `contextpatch` | Patch file_contexts before repacking | `python3 dumprx_unpacker.py contextpatch contexts/` |
+| Module | Description | Usage Example |
+|--------|-------------|---------------|
+| `fspatch.py` | Patch fs_config before unpacking | Use as library |
+| `contextpatch.py` | Patch file_contexts before repacking | Use as library |
 
 ## Integration with dumper.sh
 
-The main `dumper.sh` script automatically detects firmware types and uses the appropriate unpacking tools. The Python modules are integrated as follows:
+The main `dumper.sh` script automatically detects firmware types and uses the appropriate unpacking tools directly. The Python modules are called without wrappers for maximum efficiency.
 
-### Payload Extraction
+### Automatic Decryption
 
-For AB OTA updates with payload.bin:
-- Primary: `payload-dumper-go` (fast compiled binary)
-- Alternative: Python `payload_extract.py` (more flexible, detailed output)
+DumprX automatically detects and decrypts:
+- **OZIP files** (Oppo/OnePlus) - uses `pylib/ozipdecrypt.py`
+- **OFP files** (Oppo, Qualcomm and MediaTek variants) - uses `pylib/ofp_qc_decrypt.py` and `pylib/ofp_mtk_decrypt.py`
+- **OPS files** (OnePlus) - uses `pylib/opscrypto.py`
 
-### Super Image Extraction
+### DumprX Logger Integration
 
-For dynamic partitions (super.img):
-- Primary: `lpunpack` binary (fast)
-- Alternative: Python `lpunpack.py` (more detailed information, JSON output support)
+All Python modules use the unified `dumprx_logger.py` which provides:
+- Consistent logging with shell scripts
+- Color-coded output (INFO, SUCCESS, WARN, ERROR, etc.)
+- Respects DUMPRX_VERBOSE_MODE and DUMPRX_QUIET_MODE environment variables
+- Timestamps when enabled
 
-### Encrypted Firmware
-
-DumprX now automatically detects and decrypts:
-- OZIP files (Oppo/OnePlus)
-- OFP files (Oppo, both Qualcomm and MediaTek variants)
-- OPS files (OnePlus)
+Example log output:
+```
+[2025-12-02 19:30:15] [STEP] ▶ Extracting payload...
+[2025-12-02 19:30:16] [INFO] ℹ️ Extracting partition: system
+[2025-12-02 19:30:45] [SUCCESS] ✓ Extracted partition: system size: 2147483648
+[2025-12-02 19:31:02] [SUCCESS] ✓ Payload extraction completed in 47.23 seconds
+```
 
 ## Python Module Structure
 
@@ -112,31 +139,33 @@ DumprX now automatically detects and decrypts:
 utils/
 ├── pylib/
 │   ├── __init__.py
-│   ├── payload_extract.py      # OTA payload extractor
-│   ├── lpunpack.py             # Super image unpacker
-│   ├── imgextractor.py         # EXT4 image extractor
-│   ├── sparse_img.py           # Sparse image handler
-│   ├── blockimgdiff.py         # Block differential tool
-│   ├── ext4.py                 # EXT4 filesystem library
-│   ├── ozipdecrypt.py          # OZIP decryption
-│   ├── ofp_qc_decrypt.py       # OFP Qualcomm decryption
-│   ├── ofp_mtk_decrypt.py      # OFP MediaTek decryption
-│   ├── opscrypto.py            # OPS decryption
-│   ├── unpac.py                # PAC unpacker
-│   ├── nb0_extractor.py        # NB0 extractor
-│   ├── unkdz.py, undz.py       # KDZ/DZ tools
-│   ├── cpio.py                 # CPIO handler
-│   ├── romfs_parse.py          # ROMFS parser
-│   ├── aml_image.py            # Amlogic tools
-│   ├── allwinnerimage.py       # Allwinner tools
-│   ├── mkdtboimg.py            # DTBO tools
-│   ├── rsceutil.py             # Rockchip resource tools
-│   ├── fspatch.py              # fs_config patcher
-│   ├── contextpatch.py         # file_contexts patcher
-│   ├── ntpiutils/              # NTPI unpacking utilities
+│   ├── dumprx_logger.py         # Unified logging system
+│   ├── payload_extract.py       # OTA payload extractor
+│   ├── lpunpack.py              # Super image unpacker
+│   ├── imgextractor.py          # EXT4 image extractor
+│   ├── sparse_img.py            # Sparse image handler
+│   ├── blockimgdiff.py          # Block differential tool
+│   ├── ext4.py                  # EXT4 filesystem library
+│   ├── ozipdecrypt.py           # OZIP decryption
+│   ├── ofp_qc_decrypt.py        # OFP Qualcomm decryption
+│   ├── ofp_mtk_decrypt.py       # OFP MediaTek decryption
+│   ├── opscrypto.py             # OPS decryption
+│   ├── unpac.py                 # PAC unpacker
+│   ├── nb0_extractor.py         # NB0 extractor
+│   ├── unkdz.py, undz.py        # KDZ/DZ tools
+│   ├── cpio.py                  # CPIO handler
+│   ├── romfs_parse.py           # ROMFS parser
+│   ├── aml_image.py             # Amlogic tools
+│   ├── allwinnerimage.py        # Allwinner tools
+│   ├── mkdtboimg.py             # DTBO tools
+│   ├── rsceutil.py              # Rockchip resource tools
+│   ├── fspatch.py               # fs_config patcher
+│   ├── contextpatch.py          # file_contexts patcher
+│   ├── ntpiutils/               # NTPI unpacking utilities
 │   └── ...
-├── dumprx_unpacker.py          # Unified CLI wrapper
-└── requirements.txt            # Python dependencies
+├── sdat2img.py                  # Standalone sdat2img (enhanced)
+├── splituapp.py                 # UPDATE.APP extractor
+└── ...
 ```
 
 ## Binary Tools
@@ -167,10 +196,10 @@ These unpacking modules are adapted from:
 
 ## Notes
 
-1. The Python modules are designed to be backward compatible with existing scripts
-2. Binary tools are preferred for performance where available
-3. Python modules provide better error handling and logging
-4. Some modules can output JSON for programmatic use
+1. All modules use the DumprX logging system for consistent output
+2. Modules can be imported as libraries or run directly
+3. No wrapper scripts needed - direct integration with dumper.sh
+4. Respects environment variables: DUMPRX_VERBOSE_MODE, DUMPRX_QUIET_MODE, DUMPRX_LOG_COLORS
 5. All modules support the standard input/output patterns used in DumprX
 
 ## Troubleshooting
@@ -187,9 +216,26 @@ pip3 install zstandard     # For zstd compression
 pip3 install toml          # For CPIO handling
 ```
 
-If a specific module doesn't have a main() function, it's designed to be used as a library only. Import it in your Python scripts:
+If logging doesn't appear correctly:
+```bash
+# Enable colored output
+export DUMPRX_LOG_COLORS=true
+
+# Enable timestamps  
+export DUMPRX_LOG_TIMESTAMP=true
+
+# Enable verbose mode
+export DUMPRX_VERBOSE_MODE=true
+```
+
+For library usage in Python scripts:
 ```python
 import sys
-sys.path.insert(0, 'utils')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
+
 from pylib import imgextractor, ext4
+from pylib import dumprx_logger as log
+
+log.info("Starting extraction...")
 ```

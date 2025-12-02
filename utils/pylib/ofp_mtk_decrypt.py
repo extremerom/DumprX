@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+try:
+    from . import dumprx_logger as log
+except ImportError:
+    import dumprx_logger as log
+
 # Oppo OFP MTK Decrypter (c) B. Kerler 2022
 # Licensed under MIT License
 
@@ -91,7 +96,7 @@ def getkey(index):
     else:
         aeskey = bytes(kt[0], 'utf-8')
         aesiv = bytes(kt[1], 'utf-8')
-        print(aeskey, aesiv)
+        log.info(aeskey, aesiv)
     return aeskey, aesiv
 
 
@@ -103,7 +108,7 @@ def brutekey(rf):
         data = aes_cfb(aeskey, aesiv, encdata, True)
         if data[:3] == b"MMM":
             return aeskey, aesiv
-    print("Unknown key. Please ask the author for support :)")
+    log.info("Unknown key. Please ask the author for support :)")
     exit(0)
 
 
@@ -140,7 +145,7 @@ def main(filename, outdir):
             name, start, length, enclength, filename, _ = unpack("<32s Q Q Q 32s Q", hdr2[i * 0x60:(i * 0x60) + 0x60])
             name = name.replace(b"\x00", b"").decode('utf-8')
             filename = filename.replace(b"\x00", b"").decode('utf-8')
-            print(f"Writing \"{name}\" as \"{outdir}/{filename}\"...")
+            log.info(f"Writing \"{name}\" as \"{outdir}/{filename}\"...")
             with open(os.path.join(outdir, filename), 'wb') as wb:
                 if enclength > 0:
                     rf.seek(start)
@@ -158,4 +163,4 @@ def main(filename, outdir):
                     length -= size
                     wb.write(data)
 
-    print(f"Files successfully decrypted to subdirectory {outdir}")
+    log.info(f"Files successfully decrypted to subdirectory {outdir}")

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+try:
+    from . import dumprx_logger as log
+except ImportError:
+    import dumprx_logger as log
+
 # (c) B.Kerler 2018-2021, MIT license
 import hashlib
 import os
@@ -108,7 +113,7 @@ def extract_xml(filename, key, iv):
                 pagesize = x
                 break
         if pagesize == 0:
-            print("Unknown pagesize. Aborting")
+            log.info("Unknown pagesize. Aborting")
             return None
 
         xmloffset = filesize - pagesize
@@ -150,7 +155,7 @@ def copysub(rf, wf, start, length):
 
 
 def copy(filename, wfilename, path, start, length, checksums):
-    print(f"\nExtracting {wfilename}")
+    log.info(f"\nExtracting {wfilename}")
     with open(filename, 'rb') as rf:
         with open(os.path.join(path, wfilename), 'wb') as wf:
             rf.seek(start)
@@ -161,7 +166,7 @@ def copy(filename, wfilename, path, start, length, checksums):
 
 
 def decryptfile(key, iv, filename, path, wfilename, start, length, rlength, checksums, decryptsize=0x40000):
-    print(f"\nExtracting {wfilename}")
+    log.info(f"\nExtracting {wfilename}")
     if rlength == length:
         tlen = length
         length = (length // 0x4 * 0x4)
@@ -224,9 +229,9 @@ def checkhashfile(wfilename, checksums, iscopy):
             else:
                 md5status = "verified"
         if (sha256bad and md5bad) or (sha256bad and md5sum == "") or (md5bad and sha256sum == ""):
-            print(f"{prefix}error on hashes. File might be broken!")
+            log.info(f"{prefix}error on hashes. File might be broken!")
         else:
-            print(f"{prefix}success! (md5: {md5status} | sha256: {sha256status})")
+            log.info(f"{prefix}success! (md5: {md5status} | sha256: {sha256status})")
 
 
 def decryptitem(item, pagesize):
@@ -264,18 +269,18 @@ def main(filename, outdir):
     with open(filename, "rb") as rf:
         mag = rf.read(2)
     if mag == b'PK':
-        print("Zip file detected, trying to decrypt files")
+        log.info("Zip file detected, trying to decrypt files")
         zippw = bytes("flash@realme$50E7F7D847732396F1582CD62DD385ED7ABB0897", 'utf-8')
         with zipfile.ZipFile(filename) as file:
             for zfile in file.namelist():
-                print("Extracting ", zfile , " to " , outdir)
+                log.info("Extracting ", zfile , " to " , outdir)
                 file.extract(zfile, pwd=zippw, path=outdir)
-            print("Files extracted to " + outdir)
+            log.info("Files extracted to " + outdir)
             return
 
     pagesize, key, iv, data = generatekey2(filename)
     if pagesize == 0:
-        print("Unknown key. Aborting")
+        log.info("Unknown key. Aborting")
         return
     else:
         xml = data[:data.rfind(b">") + 1].decode('utf-8')
@@ -295,7 +300,7 @@ def main(filename, outdir):
     else:
         os.mkdir(path)
 
-    print("Saving ProFile.xml")
+    log.info("Saving ProFile.xml")
     with open(path + "/ProFile.xml", mode="w") as file_handle:
         file_handle.write(xml)
 
@@ -318,6 +323,6 @@ def main(filename, outdir):
                 copy(filename, wfilename, path, start, length, checksums)
             else:
                 decryptfile(key, iv, filename, path, wfilename, start, length, rlength, checksums, decryptsize)
-    print("\nDone. Extracted files to " + path)
+    log.info("\nDone. Extracted files to " + path)
 
     # main(filename_, outdir_)

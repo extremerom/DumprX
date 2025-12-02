@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+try:
+    from . import dumprx_logger as log
+except ImportError:
+    import dumprx_logger as log
+
 
 # Oneplus Decrypter (c) V 1.4 B.Kerler 2019-2022
 # Licensed under MIT License
@@ -97,9 +102,9 @@ class QCSparse:
             self.error(f"The file header size was expected to be 28, but is {self.file_hdr_sz:d}.")
             return False
         if self.chunk_hdr_sz != 12:
-            print(f"The chunk header size was expected to be 12, but is {self.chunk_hdr_sz:d}.")
+            log.info(f"The chunk header size was expected to be 12, but is {self.chunk_hdr_sz:d}.")
             return False
-        print("Sparse Format detected. Using unpacked image.")
+        log.info("Sparse Format detected. Using unpacked image.")
         return True
 
     def get_chunk_size(self):
@@ -136,7 +141,7 @@ class QCSparse:
                 self.rf.seek(self.rf.tell() + 4)
                 return 0
         else:
-            print(f"Unknown chunk type 0x{chunk_type:04X}")
+            log.info(f"Unknown chunk type 0x{chunk_type:04X}")
             return -1
 
     def unsparse(self):
@@ -338,7 +343,7 @@ def extractxml(filename, key):
 
 def decryptfile(rkey, filename, path, wfilename, start, length):
     sha256 = hashlib.sha256()
-    print(f"Extracting {wfilename}")
+    log.info(f"Extracting {wfilename}")
     with mmap_io(filename, 'rb') as rf:
         rf.seek(start)
         data = rf.read(length)
@@ -368,7 +373,7 @@ def encryptsub(rkey, rf, wf):
 
 
 def encryptfile(key, filename, wfilename):
-    print(f"Encrypting {filename}")
+    log.info(f"Encrypting {filename}")
     with mmap_io(filename, 'rb') as rf:
         filesize = os.stat(filename).st_size
         with mmap_io(wfilename, 'wb', filesize) as wf:
@@ -401,7 +406,7 @@ def copysub(rf, wf, start, length):
 
 
 def copyfile(filename, path, wfilename, start, length):
-    print(f"Extracting {wfilename}")
+    log.info(f"Extracting {wfilename}")
     with mmap_io(filename, 'rb') as rf:
         with mmap_io(os.path.join(path, wfilename), 'wb', length) as wf:
             return copysub(rf, wf, start, length)
@@ -462,10 +467,10 @@ def copyitem(item, directory, pos, wf):
 
 def main(args):
     global mbox
-    print("Oneplus CryptTools V1.4 (c) B. Kerler 2019-2021\n----------------------------\n")
+    log.info("Oneplus CryptTools V1.4 (c) B. Kerler 2019-2021\n----------------------------\n")
     if args["decrypt"]:
         filename = args["<filename>"].replace("\\", "/")
-        print(f"Extracting {filename}")
+        log.info(f"Extracting {filename}")
         if args['outdir']:
             path = args['outdir']
         elif "/" in filename:
@@ -481,19 +486,19 @@ def main(args):
         mbox = mbox5
         xml = extractxml(filename, key)
         if xml is not None:
-            print("MBox5")
+            log.info("MBox5")
         else:
             mbox = mbox6
             xml = extractxml(filename, key)
             if xml is not None:
-                print("MBox6")
+                log.info("MBox6")
             else:
                 mbox = mbox4
                 xml = extractxml(filename, key)
                 if xml is not None:
-                    print("MBox4")
+                    log.info("MBox4")
                 else:
-                    print("Unsupported key !")
+                    log.info("Unsupported key !")
 
         root = et.fromstring(xml)
         for child in root:
@@ -530,7 +535,7 @@ def main(args):
                         copyfile(filename, path, wfilename, start, length)
                         csha256 = calc_digest(os.path.join(path, wfilename))
                         if sha256 != csha256 and not sparse:
-                            print("Sha256 fail.")
+                            log.info("Sha256 fail.")
                     else:
                         for subitem in item:
                             if "filename" in subitem.attrib:
@@ -545,10 +550,10 @@ def main(args):
                                 copyfile(filename, path, wfilename, start, length)
                                 csha256 = calc_digest(os.path.join(path, wfilename))
                                 if sha256 != csha256 and not sparse:
-                                    print("Sha256 fail.")
+                                    log.info("Sha256 fail.")
             # else:
             #    print (child.tag, child.attrib)
-        print("Done. Extracted files to " + path)
+        log.info("Done. Extracted files to " + path)
 
     elif args["encrypt"]:
         if args["--mbox"] == "4":
@@ -631,18 +636,18 @@ def main(args):
                         mt = hashlib.md5()
                         mt.update(rt.read())
                         wt.write(bytes(mt.hexdigest(), 'utf-8') + b" " + bytes(os.path.basename(outfilename), 'utf-8'))
-                print("Done. Created " + outfilename)
+                log.info("Done. Created " + outfilename)
             except Exception as e:
-                print(e)
+                log.info(e)
 
     elif args["encryptfile"]:
         filename = args["<filename>"].replace("\\", "/")
         mbox = mbox5
         encryptfile(key, filename, filename + ".enc")
-        print("Done.")
+        log.info("Done.")
     elif args["decryptfile"]:
         filename = args["<filename>"].replace("\\", "/")
         mbox = mbox5
         fsize = os.stat(filename).st_size
         decryptfile(key, filename, "", filename + ".dec", 0, fsize)
-        print("Done.")
+        log.info("Done.")
