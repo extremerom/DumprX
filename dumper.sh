@@ -243,6 +243,15 @@ TRANSFER="${UTILSDIR}"/bin/transfer
 OMCDECODER="${UTILSDIR}"/omcdecoder.py
 OMCDECODER_BIN="${UTILSDIR}"/bin/omcdecoder
 
+# Python-based unpacking tools from MIO-KITCHEN-SOURCE (pylib/)
+PAYLOAD_EXTRACT_PY="${UTILSDIR}"/pylib/payload_extract.py
+LPUNPACK_PY="${UTILSDIR}"/pylib/lpunpack.py
+OZIPDECRYPT_PY="${UTILSDIR}"/pylib/ozipdecrypt.py
+OFP_QC_DECRYPT_PY="${UTILSDIR}"/pylib/ofp_qc_decrypt.py
+OFP_MTK_DECRYPT_PY="${UTILSDIR}"/pylib/ofp_mtk_decrypt.py
+OPSDECRYPT_PY="${UTILSDIR}"/pylib/opscrypto.py
+UNPAC_PY="${UTILSDIR}"/pylib/unpac.py
+
 if ! command -v 7zz > /dev/null 2>&1; then
 	BIN_7ZZ="${UTILSDIR}"/bin/7zz
 else
@@ -822,7 +831,7 @@ if [[ $(head -c12 "${FILEPATH}" 2>/dev/null | tr -d '\0') == "OPPOENCRYPT!" ]] |
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	util_move "${INPUTDIR}/${FILE}" "${TMPDIR}/${FILE}" 2>/dev/null || util_copy "${FILEPATH}" "${TMPDIR}/${FILE}"
 	log_info "Decrypting ozip and creating zip archive"
-	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "${OZIPDECRYPT}" "${TMPDIR}/${FILE}"
+	python3 "${OZIPDECRYPT_PY}" "${TMPDIR}/${FILE}"
 	util_mkdir "${INPUTDIR}"
 	util_remove "${INPUTDIR:?}"/*
 	if [[ -f "${FILE%.*}.zip" ]]; then
@@ -855,7 +864,7 @@ if [[ "${EXTENSION}" == "ops" ]]; then
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/"${FILE}" 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/"${FILE}"
 	log_info "Decrypting and extracting ops file..."
-	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "${OPSDECRYPT}" decrypt "${TMPDIR}"/"${FILE}"
+	python3 "${OPSDECRYPT_PY}" decrypt "${TMPDIR}"/"${FILE}"
 	mkdir -p "${INPUTDIR}" 2>/dev/null && rm -rf -- "${INPUTDIR:?}"/* 2>/dev/null
 	mv "${TMPDIR}"/extract/* "${INPUTDIR}"/
 	rm -rf "${TMPDIR:?}"/*
@@ -883,10 +892,10 @@ if [[ "${EXTENSION}" == "ofp" ]]; then
 	# Either Move Downloaded/Re-Loaded File Or Copy Local File
 	mv -f "${INPUTDIR}"/"${FILE}" "${TMPDIR}"/"${FILE}" 2>/dev/null || cp -a "${FILEPATH}" "${TMPDIR}"/"${FILE}"
 	log_info "Decrypting and extracting ofp file..."
-	uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "$OFP_QC_DECRYPT" "${TMPDIR}"/"${FILE}" out
+	python3 "${OFP_QC_DECRYPT_PY}" "${TMPDIR}"/"${FILE}" out
 	if [[ ! -f "${TMPDIR}"/out/boot.img || ! -f "${TMPDIR}"/out/userdata.img ]]; then
 		log_debug "Trying MTK decryption method..."
-		uv run --with-requirements "${UTILSDIR}/oppo_decrypt/requirements.txt" "$OFP_MTK_DECRYPT" "${TMPDIR}"/"${FILE}" out
+		python3 "${OFP_MTK_DECRYPT_PY}" "${TMPDIR}"/"${FILE}" out
 		if [[ ! -f "${TMPDIR}"/out/boot.img || ! -f "${TMPDIR}"/out/userdata.img ]]; then
 			log_error "OFP decryption failed" && exit 1
 		fi

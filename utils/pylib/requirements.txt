@@ -1,0 +1,17 @@
+# Python requirements for DumprX unpacking modules
+# Adapted from MIO-KITCHEN-SOURCE
+
+# Crypto for encryption/decryption
+pycryptodome>=3.15.0
+
+# Protocol buffers for payload handling
+protobuf>=3.20.0
+
+# HTTP requests for downloading
+requests>=2.28.0
+
+# Compression libraries
+zstandard>=0.18.0
+
+# TOML for configuration files
+toml>=0.10.2

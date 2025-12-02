@@ -170,3 +170,23 @@ Credit for those tools goes to everyone whosoever worked hard to put all those p
 - OMCDecoder (Samsung OMC/CSC XML decoder, C++ binary)
   - by @soulr344, uses gzip-hpp by @mapbox
 
+## MIO-KITCHEN-SOURCE Integration
+
+DumprX now includes comprehensive unpacking modules adapted from [MIO-KITCHEN-SOURCE](https://github.com/ColdWindScholar/MIO-KITCHEN-SOURCE) by ColdWindScholar and contributors:
+
+- **Advanced unpacking tools** - payload_extract.py, lpunpack.py, imgextractor.py, sparse_img.py
+- **Firmware decryption** - ozipdecrypt.py, ofp_qc_decrypt.py, ofp_mtk_decrypt.py, opscrypto.py
+- **Vendor-specific tools** - unpac.py (SpreadTrum), nb0_extractor.py, unkdz.py/undz.py (LG), aml_image.py (Amlogic), allwinnerimage.py
+- **Filesystem handlers** - cpio.py, romfs_parse.py, squashfs.py, ext4.py
+- **Image processing** - mkdtboimg.py (DTBO), rsceutil.py (Rockchip), qsb_imger.py
+- **Patching tools** - fspatch.py, contextpatch.py
+- **NTPI support** - ntpi_unpacker.py and ntpiutils
+
+For detailed documentation, see [UNPACKING_MODULES.md](UNPACKING_MODULES.md)
+
+### Additional Binaries from MIO-KITCHEN-SOURCE
+
+- **Compression tools** - brotli, zstd
+- **Filesystem tools** - extract.erofs, extract.f2fs, mkfs.erofs, mkfs.f2fs, make_ext4fs, mke2fs, e2fsdroid, sload.f2fs
+- **Image tools** - img2simg, lpmake, cpio
+
