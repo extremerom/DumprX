@@ -7,15 +7,25 @@ on:
         description: 'URL del dump del firmware (debe estar entre comillas simples si contiene caracteres especiales)'
         required: true
         type: string
-      org_name:
-        default: 'extremerom'
-        description: 'Nombre del autor o organizacion de destino (ej: usuario)'
+      platform:
+        description: 'Plataforma de destino (GitHub o GitLab)'
+        required: true
+        type: choice
+        options:
+          - github
+          - gitlab
+        default: github
+      repo_url:
+        description: 'URL del repositorio de destino (ej: https://github.com/usuario/repo o https://gitlab.com/usuario/repo)'
         required: true
         type: string
+      github_token:
+        description: 'Token de GitHub con permisos de escritura (solo si se selecciona GitHub)'
+        required: false
 
 jobs:
   dump:
-    runs-on: Unica
+    runs-on: rom2
     environment:
       name: /dev/null
       url: /dev/null
@@ -24,81 +34,101 @@ jobs:
       contents: write
       actions: write
       id-token: write
-      
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y unace unrar zip unzip p7zip-full p7zip-rar sharutils rar uudeview mpack arj cabextract device-tree-compiler liblzma-dev python3-pip brotli liblz4-tool axel gawk aria2 detox cpio rename liblz4-dev jq git-lfs
           chmod +x setup.sh
-          ./setup.sh 
-          
+          ./setup.sh
+
       - name: Install uv for Python packages
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-      
+
       - name: Configure Git
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "GitHub Actions Bot"
+
       - name: Setup GitHub token
+        if: inputs.platform == 'github'
         run: |
           echo "${GITHUB_TOKEN}" > .github_token
         env:
-          GITHUB_TOKEN: ${{ secrets.TEST }}
-      
-      - name: Setup GitHub organization name
+          GITHUB_TOKEN: ${{ inputs.github_token }}
+
+      - name: Setup GitLab credentials
+        if: inputs.platform == 'gitlab'
         run: |
-          echo "${{ inputs.org_name }}" > .github_orgname
-      
+          echo "${GITLAB_TOKEN}" > .gitlab_token
+
+          # Setup SSH key for GitLab
+          mkdir -p ~/.ssh
+          echo "${GITLAB_SSH_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          # Add GitLab to known hosts
+          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
+
+          # Setup Git to use SSH
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=~/.ssh/known_hosts"
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
+
+      - name: Extract organization name from repo URL
+        id: extract_org
+        run: |
+          REPO_URL="${{ inputs.repo_url }}"
+          PLATFORM="${{ inputs.platform }}"
+
+          # Remove protocol and extract path
+          if [[ "$PLATFORM" == "github" ]]; then
+            REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||' | sed 's|git@github.com:||' | sed 's|\.git$||')
+          elif [[ "$PLATFORM" == "gitlab" ]]; then
+            REPO_PATH=$(echo "$REPO_URL" | sed 's|https://gitlab.com/||' | sed 's|http://gitlab.com/||' | sed 's|git@gitlab.com:||' | sed 's|\.git$||')
+          fi
+
+          # Get organization/user name (first part before /)
+          ORG_NAME=$(echo "$REPO_PATH" | cut -d'/' -f1)
+          echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
+          echo "Extracted organization name: $ORG_NAME for platform: $PLATFORM"
+
+      - name: Setup organization name and platform
+        run: |
+          echo "${{ steps.extract_org.outputs.org_name }}" > .github_orgname
+
+          # For GitLab, also setup group name
+          if [[ "${{ inputs.platform }}" == "gitlab" ]]; then
+            echo "${{ steps.extract_org.outputs.org_name }}" > .gitlab_group
+
+            # Setup PUSH_TO_GITLAB environment variable to persist across steps
+            echo 'PUSH_TO_GITLAB=true' >> $GITHUB_ENV
+          fi
+
       - name: Run dumper script
         run: |
-          export HOME=${GITHUB_WORKSPACE}
-          cd ${GITHUB_WORKSPACE}
           chmod +x dumper.sh
           ./dumper.sh "${DUMP_URL}"
-          sudo chown -R $(whoami):$(id -gn) ./out
-          sudo chmod -R 777 ./out
-          cd out
-          zip -r -9 ../out.zip .
-
         env:
           DUMP_URL: ${{ inputs.dump_url }}
-          GITHUB_TOKEN: ${{ secrets.TEST }}
-        continue-on-error: true
+          GITHUB_TOKEN: ${{ inputs.github_token }}
 
-      - name: Set variables
-        run: |
-          echo "date=$(TZ=Asia/Ho_Chi_Minh date +%Y-%m-%d-%H:%M:%S)" >> $GITHUB_OUTPUT
-          echo "Outdir=${GITHUB_WORKSPACE}" >> $GITHUB_OUTPUT
-        id: var
-      
-      - name: Upload dump artifacts (if not pushed to GitHub)
+      - name: Upload dump artifacts (if push failed)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: device-dump
-          path: out.zip
+          path: out/
           retention-days: 7
-        continue-on-error: true
-          
-      - name: Publish to github
-        uses: softprops/action-gh-release@v1
-        with:
-          files: | 
-            ${{ steps.var.outputs.Outdir }}/out.zip
-          name: Dump Release
-          tag_name: ${{ github.run_id }}
-          body: |
-            - ${{ steps.var.outputs.date }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.TEST }}
