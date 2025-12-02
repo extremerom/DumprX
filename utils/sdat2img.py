@@ -20,7 +20,7 @@ import argparse
 # Add the utils directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.utils import sdat2img as core_sdat2img
+from core.utils import Sdat2img
 
 def main():
     """Main function for sdat2img conversion"""
@@ -42,10 +42,8 @@ def main():
         return 1
     
     try:
-        # Call the core function from MIO-KITCHEN utils
-        print(f'Converting {args.new_dat} to {args.output}...')
-        core_sdat2img(args.transfer_list, args.new_dat, args.output)
-        print(f'Successfully converted to {args.output}')
+        # Call the core Sdat2img class from MIO-KITCHEN utils
+        Sdat2img(args.transfer_list, args.new_dat, args.output)
         return 0
     except Exception as e:
         print(f'Error during conversion: {e}', file=sys.stderr)
