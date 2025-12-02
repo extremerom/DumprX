@@ -66,7 +66,7 @@ function _usage() {
 	echo "  Supported File Formats:"
 	echo "    *.zip | *.rar | *.7z | *.tar | *.tar.gz | *.tgz | *.tar.md5"
 	echo "    *.ozip | *.ofp | *.ops | *.kdz | ruu_*exe"
-	echo "    system.new.dat | system.new.dat.br | system.new.dat.xz"
+	echo "    system.new.dat | system.new.dat.br | system.new.dat.zst | system.new.dat.xz"
 	echo "    system.new.img | system.img | system-sign.img | UPDATE.APP"
 	echo "    *.emmc.img | *.img.ext4 | system.bin | system-p | payload.bin"
 	echo "    *.nb0 | .*chunk* | *.pac | *super*.img | *system*.sin"
@@ -236,6 +236,7 @@ LPUNPACK="${UTILSDIR}"/lpunpack
 LPUNPACK_PY="${UTILSDIR}"/lpunpack_tool.py
 SPLITUAPP="${UTILSDIR}"/splituapp.py
 PACEXTRACTOR="${UTILSDIR}"/pacextractor/python/pacExtractor.py
+UNPAC_PY="${UTILSDIR}"/unpac_tool.py
 NB0_EXTRACT="${UTILSDIR}"/nb0-extract
 KDZ_EXTRACT="${UTILSDIR}"/kdztools/unkdz.py
 KDZ_UNPACK_PY="${UTILSDIR}"/kdz_unpack.py
@@ -256,6 +257,12 @@ CPIO_TOOL_PY="${UTILSDIR}"/cpio_tool.py
 BROTLI="${UTILSDIR}"/bin/brotli
 EXTRACT_EROFS="${UTILSDIR}"/bin/extract.erofs
 MKFS_EROFS="${UTILSDIR}"/bin/mkfs.erofs
+ZSTD="${UTILSDIR}"/bin/zstd
+# Additional Python modules for advanced operations
+FSPATCH_PY="${UTILSDIR}"/core/fspatch.py
+CONTEXTPATCH_PY="${UTILSDIR}"/core/contextpatch.py
+ROMFS_PARSE_PY="${UTILSDIR}"/core/romfs_parse.py
+RSCEUTIL_PY="${UTILSDIR}"/core/rsceutil.py
 
 if ! command -v 7zz > /dev/null 2>&1; then
 	BIN_7ZZ="${UTILSDIR}"/bin/7zz
@@ -1082,8 +1089,20 @@ if ${BIN_7ZZ} l -ba "${FILEPATH}" | grep -q "system.new.dat" 2>/dev/null || [[ $
 				rm -rf "$i"
 			fi
 			if [[ "$i" =~ \.dat\.br$ ]]; then
-				log_debug "Converting brotli ${line} dat to normal"
-				brotli -d "$i"
+				log_debug "Decompressing brotli ${line} dat to normal"
+				if [[ -x "${BROTLI}" ]]; then
+					"${BROTLI}" -d "$i"
+				else
+					brotli -d "$i"
+				fi
+				rm -f "$i"
+			elif [[ "$i" =~ \.dat\.zst$ ]]; then
+				log_debug "Decompressing zstd ${line} dat to normal"
+				if [[ -x "${ZSTD}" ]]; then
+					"${ZSTD}" -d "$i"
+				else
+					zstd -d "$i"
+				fi
 				rm -f "$i"
 			fi
 			if [[ "$i" =~ \.new\.dat$ ]]; then
@@ -1195,6 +1214,17 @@ elif ${BIN_7ZZ} l -ba "${FILEPATH}" | grep ".pac$" 2>/dev/null || [[ $(find "${T
 	pac_list=$(find . -type f -name "*.pac" | cut -d'/' -f'2-' | sort)
 	log_info "Extracting $(echo "${pac_list}" | wc -l) PAC file(s)..."
 	for file in ${pac_list}; do
+		# Try Python unpac tool first (SPRD PAC from MIO-KITCHEN)
+		if [[ -f "${UNPAC_PY}" ]] && command -v python3 &>/dev/null; then
+			log_debug "Trying Python unpac tool for ${file}"
+			if python3 "${UNPAC_PY}" "${file}" -o "$(pwd)" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+				log_success "Python unpac extraction completed for ${file}"
+				continue
+			else
+				log_warn "Python unpac failed, falling back to PACEXTRACTOR"
+			fi
+		fi
+		# Fallback to original PACEXTRACTOR
 		python3 "${PACEXTRACTOR}" "${file}" "$(pwd)"
 	done
 	if [[ -f super.img ]]; then
@@ -1401,7 +1431,19 @@ fi
 if [[ "${EXTENSION}" == "pac" ]]; then
 	log_step "PAC archive detected"
 	log_info "Extracting PAC archive..."
-	python3 ${PACEXTRACTOR} ${FILEPATH} $(pwd)
+	# Try Python unpac tool first (SPRD PAC from MIO-KITCHEN)
+	if [[ -f "${UNPAC_PY}" ]] && command -v python3 &>/dev/null; then
+		log_debug "Trying Python unpac tool"
+		if python3 "${UNPAC_PY}" "${FILEPATH}" -o "$(pwd)" 2>&1 | tee -a "${DUMPRX_LOG_FILE}"; then
+			log_success "Python unpac extraction completed"
+		else
+			log_warn "Python unpac failed, falling back to PACEXTRACTOR"
+			python3 ${PACEXTRACTOR} ${FILEPATH} $(pwd)
+		fi
+	else
+		# Fallback to original PACEXTRACTOR
+		python3 ${PACEXTRACTOR} ${FILEPATH} $(pwd)
+	fi
 	superimage_extract || exit 1
 	log_success "PAC extraction completed"
 	exit
