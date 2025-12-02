@@ -248,6 +248,25 @@ TRANSFER="${UTILSDIR}"/bin/transfer
 OMCDECODER="${UTILSDIR}"/omcdecoder.py
 OMCDECODER_BIN="${UTILSDIR}"/bin/omcdecoder
 
+# New Python-based unpacking tools from MIO-KITCHEN-SOURCE
+DUMPRX_UNPACKER="${UTILSDIR}"/dumprx_unpacker.py
+PAYLOAD_EXTRACT_PY="${UTILSDIR}"/dumprx_unpacker.py
+LPUNPACK_PY="${UTILSDIR}"/dumprx_unpacker.py
+IMGEXTRACTOR_PY="${UTILSDIR}"/dumprx_unpacker.py
+OZIPDECRYPT_PY="${UTILSDIR}"/dumprx_unpacker.py
+OFP_QC_DECRYPT_PY="${UTILSDIR}"/dumprx_unpacker.py
+OFP_MTK_DECRYPT_PY="${UTILSDIR}"/dumprx_unpacker.py
+OPSDECRYPT_PY="${UTILSDIR}"/dumprx_unpacker.py
+UNPAC_PY="${UTILSDIR}"/dumprx_unpacker.py
+NB0_EXTRACT_PY="${UTILSDIR}"/dumprx_unpacker.py
+UNKDZ_PY="${UTILSDIR}"/dumprx_unpacker.py
+UNDZ_PY="${UTILSDIR}"/dumprx_unpacker.py
+CPIO_PY="${UTILSDIR}"/dumprx_unpacker.py
+ROMFS_PY="${UTILSDIR}"/dumprx_unpacker.py
+AML_PY="${UTILSDIR}"/dumprx_unpacker.py
+RSCEUTIL_PY="${UTILSDIR}"/dumprx_unpacker.py
+MKDTBOIMG_PY="${UTILSDIR}"/dumprx_unpacker.py
+
 if ! command -v 7zz > /dev/null 2>&1; then
 	BIN_7ZZ="${UTILSDIR}"/bin/7zz
 else
