@@ -562,7 +562,11 @@ function extract_with_f2fs() {
 	# Create output directory and get absolute path
 	mkdir -p "${output_dir}" 2>/dev/null
 	local abs_output_dir
-	abs_output_dir="$(cd "${output_dir}" && pwd)" || abs_output_dir="$(realpath "${output_dir}" 2>/dev/null || readlink -f "${output_dir}" 2>/dev/null)"
+	abs_output_dir="$(util_realpath "${output_dir}")"
+	if [[ -z "${abs_output_dir}" ]]; then
+		log_error "Failed to resolve absolute path for output directory: ${output_dir}"
+		return 1
+	fi
 	
 	# Inform user that extraction is in progress (may take a while)
 	log_info "Extracting F2FS partition (this may take several minutes)..."
