@@ -2042,8 +2042,37 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 		
 		# For user namespaces, create project directly without subgroups
 		# Project name will be in format: brand_codename_dump (e.g., samsung_dm2q_dump)
-		PROJECT_NAME="${brand}_${codename}_dump"
-		PROJECT_PATH=$(echo "${PROJECT_NAME}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
+		BASE_PROJECT_NAME="${brand}_${codename}_dump"
+		BASE_PROJECT_PATH=$(echo "${BASE_PROJECT_NAME}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
+		
+		# Find a unique project name by adding suffix if project already exists
+		# Suffix numbering: project_name (base), project_name_2, project_name_3, etc.
+		PROJECT_NAME="${BASE_PROJECT_NAME}"
+		PROJECT_PATH="${BASE_PROJECT_PATH}"
+		SUFFIX_NUM=1
+		MAX_SUFFIX=100  # Limit to prevent excessive API calls
+		
+		while true; do
+			log_info "Checking if project ${PROJECT_PATH} exists in user namespace ${GIT_ORG}"
+			EXISTING_RESPONSE=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/projects/${GIT_ORG}%2F${PROJECT_PATH}")
+			EXISTING_ID=$(echo "${EXISTING_RESPONSE}" | jq -r '.id')
+			
+			if [[ -z "${EXISTING_ID}" ]] || [[ "${EXISTING_ID}" == "null" ]]; then
+				# Project doesn't exist, we can use this name
+				log_info "Project name ${PROJECT_PATH} is available"
+				break
+			else
+				# Project exists, try with next suffix
+				((SUFFIX_NUM++))
+				if [[ ${SUFFIX_NUM} -gt ${MAX_SUFFIX} ]]; then
+					log_error "Exceeded maximum suffix limit (${MAX_SUFFIX}). Too many projects with similar names."
+					exit 1
+				fi
+				PROJECT_NAME="${BASE_PROJECT_NAME}_${SUFFIX_NUM}"
+				PROJECT_PATH="${BASE_PROJECT_PATH}_${SUFFIX_NUM}"
+				log_info "Project exists, trying ${PROJECT_PATH}..."
+			fi
+		done
 		
 		log_info "Creating project ${PROJECT_PATH} in user namespace ${GIT_ORG}"
 		CREATE_RESPONSE=$(curl -s \
@@ -2053,15 +2082,10 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 		
 		PROJECT_ID=$(echo "${CREATE_RESPONSE}" | jq -r '.id')
 		
-		# If project creation failed (might already exist), try to get existing project
+		# If project creation still failed, log error
 		if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
-			log_warn "Project creation failed, checking if project already exists..."
-			EXISTING_RESPONSE=$(curl -s --request GET --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${GITLAB_HOST}/api/v4/projects/${GIT_ORG}%2F${PROJECT_PATH}")
-			PROJECT_ID=$(echo "${EXISTING_RESPONSE}" | jq -r '.id')
-			
-			if [[ -n "${PROJECT_ID}" ]] && [[ "${PROJECT_ID}" != "null" ]]; then
-				log_info "Using existing project with ID: ${PROJECT_ID}"
-			fi
+			log_error "Failed to create project ${PROJECT_PATH}"
+			log_error "API Response: ${CREATE_RESPONSE}"
 		fi
 		
 		# Update repo variable to match the created project path
@@ -2094,16 +2118,7 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 		get_gitlab_subgrp_id ${brand} /tmp/subgrp_id.txt
 		SUBGRP_ID=$(< /tmp/subgrp_id.txt)
 
-		# Create Repository
-		CREATE_RESPONSE=$(curl -s \
-		--header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-		-X POST \
-		"${GITLAB_HOST}/api/v4/projects?name=${codename}&namespace_id=${SUBGRP_ID}&visibility=public")
-		
-		# Check if creation was successful by getting project ID from response
-		CREATED_PROJECT_ID=$(echo "${CREATE_RESPONSE}" | jq -r '.id')
-
-		# Get Project/Repo ID
+		# Get Project/Repo ID helper function
 		get_gitlab_project_id(){
 			local PROJ="$1"
 			curl -s --request GET --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "${GITLAB_HOST}/api/v4/groups/$2/projects" | jq -r .[] | jq -r .path,.id > /tmp/proj.txt
@@ -2114,16 +2129,56 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 				[[ "$TMP_I" == "$PROJ" ]] && cat /tmp/proj.txt | head -$(("$i"+1)) | tail -1 > "$3"
 			done
 			}
-		get_gitlab_project_id ${codename} ${SUBGRP_ID} /tmp/proj_id.txt
-		PROJECT_ID=$(< /tmp/proj_id.txt)
 		
-		# If we couldn't get PROJECT_ID from the search, use the one from creation
-		if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
-			if [[ -n "${CREATED_PROJECT_ID}" ]] && [[ "${CREATED_PROJECT_ID}" != "null" ]]; then
-				PROJECT_ID="${CREATED_PROJECT_ID}"
-				log_info "Using project ID from creation response: ${PROJECT_ID}"
+		# Find a unique project name by adding suffix if project already exists
+		# Suffix numbering: codename (base), codename_2, codename_3, etc.
+		BASE_CODENAME="${codename}"
+		CURRENT_CODENAME="${codename}"
+		SUFFIX_NUM=1
+		MAX_SUFFIX=100  # Limit to prevent excessive API calls
+		
+		while true; do
+			log_info "Checking if project ${CURRENT_CODENAME} exists in group ${GIT_ORG}/${brand}"
+			get_gitlab_project_id "${CURRENT_CODENAME}" "${SUBGRP_ID}" /tmp/proj_id.txt
+			EXISTING_ID=$(cat /tmp/proj_id.txt 2>/dev/null)
+			
+			if [[ -z "${EXISTING_ID}" ]] || [[ "${EXISTING_ID}" == "null" ]]; then
+				# Project doesn't exist, we can use this name
+				log_info "Project name ${CURRENT_CODENAME} is available"
+				break
+			else
+				# Project exists, try with next suffix
+				((SUFFIX_NUM++))
+				if [[ ${SUFFIX_NUM} -gt ${MAX_SUFFIX} ]]; then
+					log_error "Exceeded maximum suffix limit (${MAX_SUFFIX}). Too many projects with similar names."
+					exit 1
+				fi
+				CURRENT_CODENAME="${BASE_CODENAME}_${SUFFIX_NUM}"
+				log_info "Project exists, trying ${CURRENT_CODENAME}..."
 			fi
+		done
+		
+		# Create Repository with the unique name
+		log_info "Creating project ${CURRENT_CODENAME} in group ${GIT_ORG}/${brand}"
+		CREATE_RESPONSE=$(curl -s \
+		--header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+		-X POST \
+		"${GITLAB_HOST}/api/v4/projects?name=${CURRENT_CODENAME}&namespace_id=${SUBGRP_ID}&visibility=public")
+		
+		# Check if creation was successful by getting project ID from response
+		PROJECT_ID=$(echo "${CREATE_RESPONSE}" | jq -r '.id')
+		
+		# If project creation still failed, log error
+		if [[ -z "${PROJECT_ID}" ]] || [[ "${PROJECT_ID}" == "null" ]]; then
+			log_error "Failed to create project ${CURRENT_CODENAME}"
+			log_error "API Response: ${CREATE_RESPONSE}"
 		fi
+		
+		# Update codename to reflect the actual project name used
+		codename="${CURRENT_CODENAME}"
+		
+		# Update repo variable to reflect the actual project path in the group structure
+		repo=$(printf "${brand}" | tr '[:upper:]' '[:lower:]' && echo -e "/${codename}")
 	fi
 
 	# Delete the Temporary Files
