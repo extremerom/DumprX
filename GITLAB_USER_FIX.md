@@ -174,6 +174,12 @@ Tu token de GitLab debe tener estos permisos:
         "https://gitlab.com/api/v4/users?username=Eduardob3677"
    ```
 
+### "namespace is not valid" Error
+
+**Causa**: Este error ocurría cuando se intentaba especificar el namespace_id de un usuario al crear un proyecto.
+
+**Solución**: Este problema ha sido corregido. Ahora, al crear proyectos en namespaces de usuario, el script omite el parámetro `namespace_id` y GitLab automáticamente usa el namespace del usuario autenticado.
+
 ### "PROJECT_ID is empty or null"
 
 **Causa**: Falló la creación del proyecto.

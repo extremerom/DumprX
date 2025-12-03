@@ -2075,10 +2075,12 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 		done
 		
 		log_info "Creating project ${PROJECT_PATH} in user namespace ${GIT_ORG}"
+		# Note: For user namespaces, we omit namespace_id to let GitLab use the authenticated user's namespace.
+		# Specifying namespace_id for user namespaces causes "namespace is not valid" errors.
 		CREATE_RESPONSE=$(curl -s \
 			--header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
 			-X POST \
-			"${GITLAB_HOST}/api/v4/projects?name=${PROJECT_NAME}&path=${PROJECT_PATH}&namespace_id=${USER_ID}&visibility=public")
+			"${GITLAB_HOST}/api/v4/projects?name=${PROJECT_NAME}&path=${PROJECT_PATH}&visibility=public")
 		
 		PROJECT_ID=$(echo "${CREATE_RESPONSE}" | jq -r '.id')
 		
