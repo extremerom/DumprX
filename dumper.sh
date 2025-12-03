@@ -559,17 +559,20 @@ function extract_with_f2fs() {
 		return 1
 	fi
 	
-	# Create output directory
+	# Create output directory and get absolute path
 	mkdir -p "${output_dir}" 2>/dev/null
+	local abs_output_dir
+	abs_output_dir="$(cd "${output_dir}" && pwd)" || abs_output_dir="$(realpath "${output_dir}" 2>/dev/null || readlink -f "${output_dir}" 2>/dev/null)"
 	
 	# Inform user that extraction is in progress (may take a while)
 	log_info "Extracting F2FS partition (this may take several minutes)..."
 	
 	# Try extraction with timeout to prevent hanging (10 minutes)
 	# Use a temporary file to capture errors while showing progress
+	# Use absolute path for output directory to ensure extract.f2fs creates files in the correct location
 	local error_log
 	error_log=$(mktemp -t dumper_f2fs_XXXXXX)
-	timeout 600 "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" 2>"${error_log}"
+	timeout 600 "${EXTRACT_F2FS}" -o "${abs_output_dir}" "${img_file}" 2>"${error_log}"
 	local extract_status=$?
 	
 	# Check if extraction was successful
