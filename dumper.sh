@@ -560,7 +560,10 @@ function extract_with_f2fs() {
 	fi
 	
 	# Create output directory and get absolute path
-	mkdir -p "${output_dir}" 2>/dev/null
+	if ! mkdir -p "${output_dir}" 2>/dev/null; then
+		log_error "Failed to create output directory: ${output_dir}"
+		return 1
+	fi
 	local abs_output_dir
 	abs_output_dir="$(util_realpath "${output_dir}")"
 	if [[ -z "${abs_output_dir}" ]]; then
