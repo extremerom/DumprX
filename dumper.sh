@@ -566,7 +566,7 @@ function extract_with_fsck_f2fs() {
 	fi
 	
 	# Inform user that extraction is in progress
-	log_info "Extracting F2FS partition with fsck.f2fs (this may take several minutes)..."
+	log_info "Processing F2FS partition (this may take several minutes)..."
 	
 	# First, verify the filesystem integrity
 	log_debug "Checking F2FS filesystem integrity..."
@@ -584,8 +584,8 @@ function extract_with_fsck_f2fs() {
 	fi
 	rm -f "${fsck_log}"
 	
-	# Try extraction with 7z first (sometimes works with F2FS)
-	log_debug "Attempting to extract F2FS with 7z..."
+	# Try extraction with 7z (sometimes works with F2FS)
+	log_info "Attempting to extract F2FS with 7z after validation..."
 	if ${BIN_7ZZ} x -snld "${img_file}" -y -o"${output_dir}/" >/dev/null 2>&1; then
 		# Verify that files were actually extracted
 		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
@@ -741,16 +741,16 @@ function extract_partition_image() {
 		fi
 	fi
 	
-	# For F2FS: Use fsck.f2fs tools only (per user requirement)
+	# For F2FS: Use fsck.f2fs for validation, then try 7z extraction (per user requirement)
 	if [[ "${fs_type}" == "f2fs" ]]; then
-		log_info "Trying fsck.f2fs extraction for F2FS..."
+		log_info "Trying F2FS extraction (fsck.f2fs validation + 7z extraction)..."
 		if extract_with_fsck_f2fs "${partition}" "${img_file}" "${output_dir}"; then
-			log_success "Extracted ${partition} with fsck.f2fs"
+			log_success "Extracted ${partition} (validated with fsck.f2fs, extracted with 7z)"
 			rm -f "${img_file}" 2>/dev/null
 			extraction_success=true
 			return 0
 		else
-			log_warn "fsck.f2fs extraction failed for ${partition}"
+			log_warn "F2FS extraction failed for ${partition}"
 		fi
 	fi
 	
@@ -792,7 +792,7 @@ function extract_partition_image() {
 				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
 				;;
 			"f2fs")
-				log_error "Methods tried: fsck.f2fs"
+				log_error "Methods tried: fsck.f2fs (validation) + 7z (extraction)"
 				log_error "F2FS extraction requires mount or extract.f2fs tool which are not used per configuration"
 				log_error "Consider manually mounting the image or using extract.f2fs externally"
 				;;
