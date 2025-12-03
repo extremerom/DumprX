@@ -582,7 +582,7 @@ function extract_with_f2fs() {
 	# Check if extraction was successful
 	if [[ ${extract_status} -eq 0 ]]; then
 		# Verify that files were actually extracted
-		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
+		if [[ -n "$(find "${abs_output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
 			log_debug "Successfully extracted with extract.f2fs"
 			rm -f "${error_log}"
 			return 0
