@@ -2046,9 +2046,11 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 		BASE_PROJECT_PATH=$(echo "${BASE_PROJECT_NAME}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
 		
 		# Find a unique project name by adding suffix if project already exists
+		# Suffix numbering: project_name (base), project_name_2, project_name_3, etc.
 		PROJECT_NAME="${BASE_PROJECT_NAME}"
 		PROJECT_PATH="${BASE_PROJECT_PATH}"
 		SUFFIX_NUM=1
+		MAX_SUFFIX=100  # Limit to prevent excessive API calls
 		
 		while true; do
 			log_info "Checking if project ${PROJECT_PATH} exists in user namespace ${GIT_ORG}"
@@ -2062,6 +2064,10 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 			else
 				# Project exists, try with next suffix
 				((SUFFIX_NUM++))
+				if [[ ${SUFFIX_NUM} -gt ${MAX_SUFFIX} ]]; then
+					log_error "Exceeded maximum suffix limit (${MAX_SUFFIX}). Too many projects with similar names."
+					exit 1
+				fi
 				PROJECT_NAME="${BASE_PROJECT_NAME}_${SUFFIX_NUM}"
 				PROJECT_PATH="${BASE_PROJECT_PATH}_${SUFFIX_NUM}"
 				log_info "Project exists, trying ${PROJECT_PATH}..."
@@ -2125,9 +2131,11 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 			}
 		
 		# Find a unique project name by adding suffix if project already exists
+		# Suffix numbering: codename (base), codename_2, codename_3, etc.
 		BASE_CODENAME="${codename}"
 		CURRENT_CODENAME="${codename}"
 		SUFFIX_NUM=1
+		MAX_SUFFIX=100  # Limit to prevent excessive API calls
 		
 		while true; do
 			log_info "Checking if project ${CURRENT_CODENAME} exists in group ${GIT_ORG}/${brand}"
@@ -2141,6 +2149,10 @@ elif [[ -s "${PROJECT_DIR}"/.gitlab_token ]]; then
 			else
 				# Project exists, try with next suffix
 				((SUFFIX_NUM++))
+				if [[ ${SUFFIX_NUM} -gt ${MAX_SUFFIX} ]]; then
+					log_error "Exceeded maximum suffix limit (${MAX_SUFFIX}). Too many projects with similar names."
+					exit 1
+				fi
 				CURRENT_CODENAME="${BASE_CODENAME}_${SUFFIX_NUM}"
 				log_info "Project exists, trying ${CURRENT_CODENAME}..."
 			fi
