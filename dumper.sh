@@ -566,29 +566,24 @@ function extract_with_f2fs() {
 	fi
 	
 	# Inform user that extraction is in progress
-	log_info "Extracting F2FS partition with extract.f2fs (this may take several minutes)..."
-	
-	# Use extract.f2fs tool for extraction
-	local extract_log
-	extract_log=$(mktemp -t dumper_extract_f2fs_XXXXXX)
+	log_info "Extracting F2FS partition (this may take several minutes)..."
 	
 	# Run extract.f2fs with output directory option
-	if "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" >"${extract_log}" 2>&1; then
+	# Show output for user visibility (extraction can take a while)
+	if "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}"; then
 		# Verify that files were actually extracted
-		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
-			log_debug "Successfully extracted F2FS with extract.f2fs"
-			rm -f "${extract_log}"
+		local file_count
+		file_count=$(find "${output_dir}" -type f 2>/dev/null | wc -l)
+		if [[ ${file_count} -gt 0 ]]; then
+			log_debug "Successfully extracted F2FS with extract.f2fs (${file_count} files)"
 			return 0
 		else
-			log_warn "extract.f2fs completed but no files extracted"
+			log_warn "extract.f2fs completed but no files found in ${output_dir}"
 		fi
 	else
-		log_debug "extract.f2fs extraction failed with exit code $?"
-		if [[ -s "${extract_log}" ]]; then
-			grep -i "error\|fail\|invalid" "${extract_log}" | head -5
-		fi
+		local exit_code=$?
+		log_debug "extract.f2fs extraction failed with exit code ${exit_code}"
 	fi
-	rm -f "${extract_log}"
 	
 	return 1
 }
@@ -730,9 +725,20 @@ function extract_partition_image() {
 		fi
 	fi
 	
-	# For F2FS: Use extract.f2fs tool for extraction
+	# For F2FS: Try mount first (faster), then extract.f2fs as fallback
 	if [[ "${fs_type}" == "f2fs" ]]; then
-		log_info "Trying F2FS extraction with extract.f2fs..."
+		log_info "Trying mount loop extraction for F2FS..."
+		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with mount loop"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "Mount loop extraction failed for ${partition}"
+		fi
+		
+		# Fallback to extract.f2fs tool
+		log_info "Trying extract.f2fs as fallback for F2FS..."
 		if extract_with_f2fs "${partition}" "${img_file}" "${output_dir}"; then
 			log_success "Extracted ${partition} with extract.f2fs"
 			rm -f "${img_file}" 2>/dev/null
