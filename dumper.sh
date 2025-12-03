@@ -261,7 +261,7 @@ AFHDL="${UTILSDIR}"/downloaders/afh_dl.py
 FSCK_EROFS=${UTILSDIR}/bin/fsck.erofs
 
 # F2FS
-# EXTRACT_F2FS=${UTILSDIR}/bin/extract.f2fs  # Removed per user requirement - using fsck.f2fs instead
+EXTRACT_F2FS=${UTILSDIR}/bin/extract.f2fs
 
 # Partition List That Are Currently Supported
 PARTITIONS="system system_ext system_other systemex vendor cust odm oem factory product xrom modem dtbo dtb boot vendor_boot recovery tz oppo_product preload_common opproduct reserve india my_preload my_odm my_stock my_operator my_country my_product my_company my_engineering my_heytap my_custom my_manifest my_carrier my_region my_bigball my_version special_preload system_dlkm vendor_dlkm odm_dlkm init_boot vendor_kernel_boot odmko socko nt_log mi_ext hw_product product_h preas preavs optics omr prism persist"
@@ -545,17 +545,17 @@ function extract_with_erofs() {
 	fi
 }
 
-# Extract partition using fsck.f2fs
-function extract_with_fsck_f2fs() {
+# Extract partition using extract.f2fs
+function extract_with_f2fs() {
 	local partition="$1"
 	local img_file="$2"
 	local output_dir="$3"
 	
-	log_debug "Attempting extraction with fsck.f2fs tools..."
+	log_debug "Attempting extraction with extract.f2fs tool..."
 	
-	# Check if fsck.f2fs is available
-	if ! command -v fsck.f2fs >/dev/null 2>&1; then
-		log_debug "fsck.f2fs not found"
+	# Check if extract.f2fs is available
+	if [[ ! -x "${EXTRACT_F2FS}" ]]; then
+		log_debug "extract.f2fs not found or not executable at ${EXTRACT_F2FS}"
 		return 1
 	fi
 	
@@ -566,40 +566,29 @@ function extract_with_fsck_f2fs() {
 	fi
 	
 	# Inform user that extraction is in progress
-	log_info "Processing F2FS partition (this may take several minutes)..."
+	log_info "Extracting F2FS partition with extract.f2fs (this may take several minutes)..."
 	
-	# First, verify the filesystem integrity
-	log_debug "Checking F2FS filesystem integrity..."
-	local fsck_log
-	fsck_log=$(mktemp -t dumper_fsck_f2fs_XXXXXX)
+	# Use extract.f2fs tool for extraction
+	local extract_log
+	extract_log=$(mktemp -t dumper_extract_f2fs_XXXXXX)
 	
-	# Run fsck.f2fs to validate the filesystem
-	if ! fsck.f2fs -f "${img_file}" >"${fsck_log}" 2>&1; then
-		log_warn "fsck.f2fs reported issues with the filesystem"
-		if [[ -s "${fsck_log}" ]]; then
-			grep -i "error\|fail\|invalid" "${fsck_log}" | head -5
-		fi
-	else
-		log_debug "F2FS filesystem check passed"
-	fi
-	rm -f "${fsck_log}"
-	
-	# Try extraction with 7z (sometimes works with F2FS)
-	log_info "Attempting to extract F2FS with 7z after validation..."
-	if ${BIN_7ZZ} x -snld "${img_file}" -y -o"${output_dir}/" >/dev/null 2>&1; then
+	# Run extract.f2fs with output directory option
+	if "${EXTRACT_F2FS}" -o "${output_dir}" "${img_file}" >"${extract_log}" 2>&1; then
 		# Verify that files were actually extracted
 		if [[ -n "$(find "${output_dir}" -type f -print -quit 2>/dev/null)" ]]; then
-			log_debug "Successfully extracted F2FS with 7z"
+			log_debug "Successfully extracted F2FS with extract.f2fs"
+			rm -f "${extract_log}"
 			return 0
+		else
+			log_warn "extract.f2fs completed but no files extracted"
+		fi
+	else
+		log_debug "extract.f2fs extraction failed with exit code $?"
+		if [[ -s "${extract_log}" ]]; then
+			grep -i "error\|fail\|invalid" "${extract_log}" | head -5
 		fi
 	fi
-	
-	# If 7z failed, F2FS extraction is not supported without mount or extract.f2fs
-	log_warn "F2FS extraction failed: This tool requires mount or extract.f2fs for F2FS filesystems"
-	log_info "The filesystem has been validated with fsck.f2fs"
-	log_info "To extract this partition, you can:"
-	log_info "  1. Manually mount the image: sudo mount -o loop,ro ${img_file} /mnt"
-	log_info "  2. Use the extract.f2fs tool if available"
+	rm -f "${extract_log}"
 	
 	return 1
 }
@@ -616,9 +605,9 @@ function extract_with_mount() {
 	# Create temporary mount point
 	mkdir -p "${temp_mount}" 2>/dev/null
 	
-	# Try to mount with specific filesystem types (excluding f2fs per user requirement)
+	# Try to mount with specific filesystem types (including f2fs as fallback)
 	local mount_success=false
-	local fs_types=("auto" "erofs" "ext4")
+	local fs_types=("auto" "erofs" "ext4" "f2fs")
 	
 	for fs_type in "${fs_types[@]}"; do
 		if sudo mount -o loop,ro -t "${fs_type}" "${img_file}" "${temp_mount}" 2>/dev/null; then
@@ -741,16 +730,16 @@ function extract_partition_image() {
 		fi
 	fi
 	
-	# For F2FS: Use fsck.f2fs for validation, then try 7z extraction (per user requirement)
+	# For F2FS: Use extract.f2fs tool for extraction
 	if [[ "${fs_type}" == "f2fs" ]]; then
-		log_info "Trying F2FS extraction (fsck.f2fs validation + 7z extraction)..."
-		if extract_with_fsck_f2fs "${partition}" "${img_file}" "${output_dir}"; then
-			log_success "Extracted ${partition} (validated with fsck.f2fs, extracted with 7z)"
+		log_info "Trying F2FS extraction with extract.f2fs..."
+		if extract_with_f2fs "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with extract.f2fs"
 			rm -f "${img_file}" 2>/dev/null
 			extraction_success=true
 			return 0
 		else
-			log_warn "F2FS extraction failed for ${partition}"
+			log_warn "extract.f2fs extraction failed for ${partition}"
 		fi
 	fi
 	
@@ -792,9 +781,8 @@ function extract_partition_image() {
 				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
 				;;
 			"f2fs")
-				log_error "Methods tried: fsck.f2fs (validation) + 7z (extraction)"
-				log_error "F2FS extraction requires mount or extract.f2fs tool which are not used per configuration"
-				log_error "Consider manually mounting the image or using extract.f2fs externally"
+				log_error "Methods tried: extract.f2fs, mount loop"
+				log_error "F2FS extraction failed - image may be encrypted or corrupted"
 				;;
 			"ext4"|"unknown")
 				log_error "Methods tried: 7z, mount loop"
