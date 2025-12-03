@@ -746,8 +746,18 @@ function extract_partition_image() {
 		fi
 	fi
 	
-	# For F2FS: Use mount loop (kernel native driver, more reliable)
+	# For F2FS: Try 7z first (alternative method), then mount loop, then extract.f2fs
 	if [[ "${fs_type}" == "f2fs" ]]; then
+		log_info "Trying 7z extraction for F2FS..."
+		if extract_with_7z "${partition}" "${img_file}" "${output_dir}"; then
+			log_success "Extracted ${partition} with 7z"
+			rm -f "${img_file}" 2>/dev/null
+			extraction_success=true
+			return 0
+		else
+			log_warn "7z extraction failed for ${partition}"
+		fi
+		
 		log_info "Trying mount loop extraction for F2FS..."
 		if extract_with_mount "${partition}" "${img_file}" "${output_dir}"; then
 			log_success "Extracted ${partition} with mount loop"
@@ -807,7 +817,7 @@ function extract_partition_image() {
 				log_error "EROFS requires Linux kernel 5.4+ and fsck.erofs tool"
 				;;
 			"f2fs")
-				log_error "Methods tried: mount loop, extract.f2fs"
+				log_error "Methods tried: 7z, mount loop, extract.f2fs"
 				log_error "F2FS extraction failed - image may be corrupted, encrypted, or kernel doesn't support F2FS"
 				;;
 			"ext4"|"unknown")
